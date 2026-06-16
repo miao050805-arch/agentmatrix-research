@@ -29,8 +29,9 @@ Do not use this skill to build UI pages. Front-end interaction belongs in the de
 
 ## Workflow
 
-> **Critical — pass panel parameters explicitly in every step.**
-> `export-alpha101-truth-template`, `validate-alpha101-truth`, and `run-alpha101-proof-batch` must use **identical** `--n-dates`, `--n-codes`, and `--seed` values. Their built-in defaults differ (160/seed 7 vs 420/seed 29), so relying on defaults produces mismatched data and fails. Never omit these flags.
+> **Critical — pass panel parameters explicitly and consistently.**
+> `export-alpha101-truth-template` and `run-alpha101-proof-batch` must use **identical** `--n-dates`, `--n-codes`, and `--seed` values. Their built-in defaults differ (160/seed 7 vs 420/seed 29), so relying on defaults produces mismatched data and fails. Never omit these flags.
+> `validate-alpha101-truth` only validates an existing truth CSV — it does **not** take panel parameters (`--n-dates/--n-codes/--seed`) and is not involved in panel construction.
 
 1. Read the current `factor_lab` contracts, runtime layout, specs, and existing Alpha101 implementation.
 2. Preserve existing working paths such as `qlib_lab` and `gtja191_lab`; make additive changes.
