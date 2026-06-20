@@ -38,7 +38,7 @@ validate-alpha101-truth does not accept panel-shape arguments; it only validates
 3. Export or refresh the Alpha101 spec and catalog:
 
    ```bash
-   python -m research_core.factor_lab.cli export-alpha101 --proof-factor alpha101
+   python -m research_core.factor_lab.cli export-alpha101 --proof-factor alpha1
    ```
 
 4. Export a truth CSV template when preparing a truth-aligned proof run:
