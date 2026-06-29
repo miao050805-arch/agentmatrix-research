@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
 
@@ -44,21 +44,10 @@ def _cors_origins() -> list[str]:
 
 
 CORS(app, resources={r"/api/*": {"origins": _cors_origins()}})
-FRONTEND_DIR = project_root / "frontend" / "factor-lab-dashboard"
 
 
 def _workspace() -> FactorLabWorkspaceConfig:
     return FactorLabWorkspaceConfig()
-
-
-@app.route("/factor-lab-dashboard/", methods=["GET"])
-def factor_lab_dashboard_index():
-    return send_from_directory(FRONTEND_DIR, "index.html")
-
-
-@app.route("/factor-lab-dashboard/<path:filename>", methods=["GET"])
-def factor_lab_dashboard_asset(filename: str):
-    return send_from_directory(FRONTEND_DIR, filename)
 
 
 @app.route("/api/agents/factor-lab/overview", methods=["GET"])

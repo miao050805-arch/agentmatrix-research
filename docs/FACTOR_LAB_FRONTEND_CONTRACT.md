@@ -181,8 +181,44 @@ category_inferred: true
 
 ```text
 proof_status: passed / failed / partial / pending / missing
-truth_status: exact_match / mismatch / empty_compare / not_compared / missing
+truth_status: exact_match / mismatch / not_applicable / not_compared / pending / empty_compare / missing
 overall_status: passed / failed / partial / pending / review_needed
+```
+
+`overall_status` is factor-level status for the current row/detail view. It must not be copied from `report.summary.overall_status`, because that summary field describes the whole job batch. The adapter should either derive factor-level `overall_status` from that factor's own `proof_status` and `truth_status`, or omit it when no reliable factor-level status exists.
+
+`truth_status` 的语义必须区分清楚，不能把所有“没有匹配结果”的情况都显示成同一种“无对照”：
+
+```text
+exact_match
+  完全匹配。有标准 truth，且 proof 结果与 truth 对上。
+
+mismatch
+  不匹配。有标准 truth，但 proof 结果与 truth 不一致，需要关注。
+
+not_applicable
+  无需对照。这个因子本身没有标准 truth 可对，例如未来 AI 挖掘、文献爬取或多因子合成产生的全新因子。
+  这不是“还没对照”，而是“这类因子天生不靠 truth 验证”。
+  对这类因子，前端应同时展示 proof_status、coverage_ratio、IC/IR、分层表现等有效性指标，
+  让用户知道它应通过复现完整性和研究有效性判断，而不是通过 truth_exact_match_ratio 判断。
+
+not_compared / pending
+  待对照。这个因子有 truth，理论上应该对照，但当前还没有跑 truth 对比。
+
+empty_compare
+  对照异常。truth 对比流程运行了，但结果为空，通常表示流程或输入数据异常，需要关注。
+
+missing
+  缺失。本该存在的 truth 对照数据或对照产物丢失。
+```
+
+前端展示建议：
+
+```text
+not_applicable 显示为“无需对照”，不要显示成“未对比”。
+not_compared / pending 显示为“待对照”。
+empty_compare 显示为“对照异常”。
+missing 显示为“缺失”。
 ```
 
 ### metrics

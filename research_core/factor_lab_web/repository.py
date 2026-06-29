@@ -116,6 +116,5 @@ def latest_factor_reports_with_diagnostics(
                 "latest_checked_at": report.get("generated_at") or job.get("generated_at"),
                 "data_source": report.get("data_source") or job.get("data_source"),
                 "dataset": report.get("dataset") or job.get("dataset") or {},
-                "overall_status": (report.get("summary") or {}).get("overall_status"),
             }
     return reports, diagnostics

@@ -153,6 +153,31 @@ rank_ic_mean
 rank_ic_ir
 ```
 
+`overall_status` 是单因子视图里的状态，不能直接使用 `report.summary.overall_status`。`summary.overall_status` 描述的是整批 job 的汇总结论；单个因子的 `overall_status` 应基于该因子的 `proof_status` 和 `truth_status` 推导，或者在没有可靠单因子状态时不输出。
+
+`truth_status` 建议统一使用以下语义：
+
+```text
+exact_match
+  完全匹配：有标准 truth，且复现结果与 truth 对上。
+
+mismatch
+  不匹配：有标准 truth，但复现结果与 truth 不一致。
+
+not_applicable
+  无需对照：因子本身没有标准 truth 可对，例如未来 AI 挖掘、文献爬取或多因子合成产生的全新因子。
+  这类因子不应被理解成“还没对照”，应结合 proof_status、coverage_ratio、IC/IR 和研究分析指标判断。
+
+not_compared / pending
+  待对照：因子有 truth，应该对照，但当前还没跑 truth 对比。
+
+empty_compare
+  对照异常：truth 对比流程运行了，但结果为空，需要关注。
+
+missing
+  缺失：本该存在的 truth 对照数据或对照产物丢失。
+```
+
 如果是新的策略或研究分析流程，建议输出单独的：
 
 ```text

@@ -154,6 +154,7 @@ def _factor_row(
     metrics = _find_metrics(metrics_by_factor, raw_factor_name, [raw_library, library, *spec.get("metric_libraries", [])])
     proof_status = str(metrics.get("proof_status") or "missing")
     truth_status = str(metrics.get("truth_status") or "not_compared")
+    overall_status = _factor_overall_status(proof_status, truth_status)
     category, category_inferred = _category_from_spec(spec, required_fields)
     metadata = dict(spec.get("metadata") or {})
     metadata["category_inferred"] = category_inferred
@@ -178,7 +179,7 @@ def _factor_row(
         "implementation_status": spec.get("implementation_status") or spec.get("status") or "unknown",
         "proof_status": proof_status,
         "truth_status": truth_status,
-        "overall_status": metrics.get("overall_status"),
+        "overall_status": overall_status,
         "coverage_ratio": safe_float(metrics.get("coverage_ratio")),
         "rank_ic_mean": safe_float(metrics.get("rank_ic_mean")),
         "rank_ic_ir": safe_float(metrics.get("rank_ic_ir")),
@@ -315,6 +316,25 @@ def _reuse_recommendation(proof_status: str, truth_status: str) -> str:
     if proof_status == "missing":
         return "未复现"
     return "待确认"
+
+
+def _factor_overall_status(proof_status: str, truth_status: str) -> str:
+    proof = str(proof_status or "").lower()
+    truth = str(truth_status or "").lower()
+
+    if proof == "failed":
+        return "failed"
+    if proof == "partial":
+        return "partial"
+    if proof in {"missing", "pending", ""}:
+        return "pending"
+    if truth in {"mismatch", "empty_compare", "missing"}:
+        return "review_needed"
+    if proof == "passed" and truth in {"exact_match", "not_applicable"}:
+        return "passed"
+    if truth in {"not_compared", "pending", ""}:
+        return "pending"
+    return "review_needed"
 
 
 def _parse_factor_id(factor_id: str) -> tuple[str, str]:
