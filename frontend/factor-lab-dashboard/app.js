@@ -3,7 +3,7 @@ const API_HOST =
     ? window.location.origin
     : "http://127.0.0.1:8012";
 const API_BASE = `${API_HOST}/api/agents/factor-lab`;
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 50;
 const AUTO_REFRESH_INTERVAL_MS = 10000;
 const REQUEST_TIMEOUT_MS = 1800;
 
@@ -20,10 +20,14 @@ const state = {
   page: 1,
   sortKey: null,
   sortDirection: "default",
+  strategySortKey: null,
+  strategySortDirection: "default",
   localConnected: false,
   isLoading: false,
   autoRefreshTimer: null,
   monitorFilter: "all",
+  monitorSortKey: null,
+  monitorSortDirection: "default",
   dragSelect: {
     active: false,
     targetChecked: true,
@@ -31,6 +35,7 @@ const state = {
   },
   view: "library",
   activeFactorId: null,
+  activeStrategyId: null,
   detailTab: "analysis",
 };
 
@@ -38,8 +43,12 @@ const els = {
   pageTitle: document.querySelector("#pageTitle"),
   localStatus: document.querySelector("#localStatus"),
   cloudStatus: document.querySelector("#cloudStatus"),
+  quantStatus: document.querySelector("#quantStatus"),
   libraryView: document.querySelector("#libraryView"),
   monitorView: document.querySelector("#monitorView"),
+  strategyView: document.querySelector("#strategyView"),
+  taskView: document.querySelector("#taskView"),
+  strategyDetailView: document.querySelector("#strategyDetailView"),
   detailView: document.querySelector("#detailView"),
   navItems: document.querySelectorAll(".nav-item[data-view]"),
   categoryTabs: document.querySelector("#categoryTabs"),
@@ -61,6 +70,11 @@ const els = {
   monitorStats: document.querySelector("#monitorStats"),
   monitorTableBody: document.querySelector("#monitorTableBody"),
   monitorFilters: document.querySelectorAll("[data-monitor-filter]"),
+  strategyStats: document.querySelector("#strategyStats"),
+  strategyTableBody: document.querySelector("#strategyTableBody"),
+  taskStats: document.querySelector("#taskStats"),
+  taskTableBody: document.querySelector("#taskTableBody"),
+  taskStagePanel: document.querySelector("#taskStagePanel"),
   refreshButton: document.querySelector("#refreshButton"),
   collapseButton: document.querySelector("#collapseButton"),
   appShell: document.querySelector(".app-shell"),
@@ -262,6 +276,22 @@ function updateConnectionStatus(ok, payload) {
   els.cloudStatus.textContent = `云端信息库：${cloudLabel}`;
 }
 
+function updateQuantApiStatus(payload, failed = false) {
+  if (!els.quantStatus) return;
+  if (failed) {
+    els.quantStatus.className = "status-pill status-bad";
+    els.quantStatus.textContent = "Quant API：检测失败";
+    els.quantStatus.title = "未能通过本地 Flask 查询 Quant API 配置状态";
+    return;
+  }
+  const configured = Boolean(payload?.token_configured);
+  els.quantStatus.className = configured ? "status-pill status-ok" : "status-pill status-warn";
+  els.quantStatus.textContent = configured ? "Quant API：已配置 token" : "Quant API：未配置 token";
+  els.quantStatus.title = configured
+    ? `官方数据代理已配置：${payload?.base_url || "Quant API"}`
+    : "尚未配置 FACTOR_LAB_QUANT_API_TOKEN 或 QUANT_API_TOKEN，前端不会直接持有 token";
+}
+
 function updateRefreshButton(loading) {
   els.refreshButton.disabled = loading;
   els.refreshButton.classList.toggle("is-loading", loading);
@@ -311,6 +341,19 @@ async function checkLocalHealth() {
   return healthPromise;
 }
 
+async function checkQuantApiStatus() {
+  try {
+    const response = await fetchWithTimeout(withCacheBust(`${API_BASE}/quant-api/status`));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    updateQuantApiStatus(payload);
+    return payload;
+  } catch (error) {
+    updateQuantApiStatus(null, true);
+    return null;
+  }
+}
+
 async function loadData() {
   if (state.isLoading) {
     return;
@@ -320,6 +363,7 @@ async function loadData() {
   try {
     const healthy = await checkLocalHealth();
     if (!healthy) throw new Error("Local Flask service is offline");
+    checkQuantApiStatus();
     const response = await fetchWithTimeout(withCacheBust(`${API_BASE}/factor-library`));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
@@ -332,14 +376,21 @@ async function loadData() {
     syncDetailFromHash();
     if (state.view === "detail") renderDetail();
     if (state.view === "monitor") renderMonitor();
+    if (state.view === "strategy") renderStrategy();
+    if (state.view === "strategy-detail") renderStrategyDetail();
+    if (state.view === "tasks") renderTasks();
   } catch (error) {
     updateConnectionStatus(false);
+    updateQuantApiStatus(null, true);
     els.errorPanel.classList.remove("hidden");
     state.rawFactors = [];
     state.filteredFactors = [];
     renderTabs({ categories: {}, libraries: {}, factors: [] });
     renderTable();
     if (state.view === "monitor") renderMonitor();
+    if (state.view === "strategy") renderStrategy();
+    if (state.view === "strategy-detail") renderStrategyDetail();
+    if (state.view === "tasks") renderTasks();
   } finally {
     state.isLoading = false;
     updateRefreshButton(false);
@@ -462,6 +513,60 @@ function renderSortHeaders() {
     header.setAttribute(
       "aria-sort",
       active ? (state.sortDirection === "desc" ? "descending" : "ascending") : "none",
+    );
+  });
+}
+
+function cycleMonitorSort(key) {
+  if (state.monitorSortKey !== key || state.monitorSortDirection === "default") {
+    state.monitorSortKey = key;
+    state.monitorSortDirection = "desc";
+    return;
+  }
+  if (state.monitorSortDirection === "desc") {
+    state.monitorSortDirection = "asc";
+    return;
+  }
+  state.monitorSortKey = null;
+  state.monitorSortDirection = "default";
+}
+
+function renderMonitorSortHeaders() {
+  document.querySelectorAll("th.monitor-sortable").forEach((header) => {
+    const active = state.monitorSortKey === header.dataset.monitorSort && state.monitorSortDirection !== "default";
+    header.classList.toggle("sort-desc", active && state.monitorSortDirection === "desc");
+    header.classList.toggle("sort-asc", active && state.monitorSortDirection === "asc");
+    header.classList.toggle("sort-default", !active);
+    header.setAttribute(
+      "aria-sort",
+      active ? (state.monitorSortDirection === "desc" ? "descending" : "ascending") : "none",
+    );
+  });
+}
+
+function cycleStrategySort(key) {
+  if (state.strategySortKey !== key || state.strategySortDirection === "default") {
+    state.strategySortKey = key;
+    state.strategySortDirection = "desc";
+    return;
+  }
+  if (state.strategySortDirection === "desc") {
+    state.strategySortDirection = "asc";
+    return;
+  }
+  state.strategySortKey = null;
+  state.strategySortDirection = "default";
+}
+
+function renderStrategySortHeaders() {
+  document.querySelectorAll("th.strategy-sortable").forEach((header) => {
+    const active = state.strategySortKey === header.dataset.strategySort && state.strategySortDirection !== "default";
+    header.classList.toggle("sort-desc", active && state.strategySortDirection === "desc");
+    header.classList.toggle("sort-asc", active && state.strategySortDirection === "asc");
+    header.classList.toggle("sort-default", !active);
+    header.setAttribute(
+      "aria-sort",
+      active ? (state.strategySortDirection === "desc" ? "descending" : "ascending") : "none",
     );
   });
 }
@@ -737,11 +842,15 @@ function renderMonitor() {
     .map((factor) => ({ factor, bucket: monitorBucket(factor) }))
     .filter((item) => state.monitorFilter === "all" || item.bucket === state.monitorFilter)
     .sort((a, b) => {
+      if (state.monitorSortKey && state.monitorSortDirection !== "default") {
+        return compareMonitorRows(a, b);
+      }
       return (
         monitorSortValue(b.factor) - monitorSortValue(a.factor) ||
         String(a.factor.factor_name).localeCompare(String(b.factor.factor_name), "zh-Hans-CN", { numeric: true })
       );
     });
+  renderMonitorSortHeaders();
 
   if (!factors.length) {
     els.monitorTableBody.innerHTML = `
@@ -791,6 +900,377 @@ function renderMonitor() {
   });
 }
 
+function compareMonitorRows(left, right) {
+  const key = state.monitorSortKey;
+  const direction = state.monitorSortDirection === "asc" ? 1 : -1;
+  if (key === "bucket") {
+    return (monitorSortValue(left.factor) - monitorSortValue(right.factor)) * direction;
+  }
+  const leftValue = left.factor[key];
+  const rightValue = right.factor[key];
+  if (typeof leftValue === "number" || typeof rightValue === "number") {
+    return compareNullableNumbers(leftValue, rightValue) * direction;
+  }
+  return String(leftValue ?? "").localeCompare(String(rightValue ?? ""), "zh-CN", { numeric: true }) * direction;
+}
+
+function strategyRows() {
+  const reusable = state.rawFactors.filter((factor) => factor.reuse_recommendation === "可复用");
+  const first = reusable[0] || state.rawFactors[0];
+  return [
+    {
+      id: first ? `strategy_single_factor_${sanitizeId(first.id || first.factor_name)}` : "strategy_single_factor",
+      name: first ? `${first.factor_name} 单因子分层策略` : "单因子分层策略",
+      type: "单因子",
+      factors: first ? `${first.library}:${first.factor_name}` : "待选择",
+      universe: "当前样本股票池",
+      rebalance: "待策略层接入",
+      cost: "待策略层接入",
+      annualReturn: null,
+      sharpe: null,
+      maxDrawdown: null,
+      status: first ? "研究就绪" : "待接入",
+      updatedAt: first?.latest_checked_at || "-",
+    },
+    {
+      id: "strategy_multi_factor_candidate",
+      name: "多因子合成候选",
+      type: "多因子",
+      factors: "待选择",
+      universe: "待接入",
+      rebalance: "待接入",
+      cost: "待接入",
+      annualReturn: null,
+      sharpe: null,
+      maxDrawdown: null,
+      status: "待接入",
+      updatedAt: "-",
+    },
+    {
+      id: "strategy_agent_pipeline",
+      name: "AI Agent 自动生成策略",
+      type: "Agent",
+      factors: "待 Agent 提交",
+      universe: "待接入",
+      rebalance: "待接入",
+      cost: "待接入",
+      annualReturn: null,
+      sharpe: null,
+      maxDrawdown: null,
+      status: "待接入",
+      updatedAt: "-",
+    },
+  ];
+}
+
+function renderStrategyStats(rows) {
+  if (!els.strategyStats) return;
+  const ready = rows.filter((row) => row.status === "研究就绪").length;
+  els.strategyStats.innerHTML = [
+    ["策略条目", rows.length, "含已接入和预留流程"],
+    ["已有研究基础", ready, "可从因子研究结果继续推进"],
+    ["正式回测", 0, "等待策略层与真实交易参数接入"],
+    ["数据状态", "占位", "当前不触发计算"],
+  ]
+    .map(
+      ([label, value, note]) => `
+        <article class="monitor-stat-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+          <small>${note}</small>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderStrategy() {
+  const rows = strategyRows();
+  if (state.strategySortKey && state.strategySortDirection !== "default") {
+    rows.sort(compareStrategies);
+  }
+  renderStrategyStats(rows);
+  renderStrategySortHeaders();
+  if (!els.strategyTableBody) return;
+  els.strategyTableBody.innerHTML = rows
+    .map(
+      (row) => `
+        <tr>
+          <td>
+            <button type="button" class="strategy-link" data-strategy-id="${escapeHtml(row.id)}">${escapeHtml(row.name)}</button>
+          </td>
+          <td>${escapeHtml(row.type)}</td>
+          <td>${escapeHtml(row.factors)}</td>
+          <td>${escapeHtml(row.universe)}</td>
+          <td>
+            <strong>${escapeHtml(row.rebalance)}</strong>
+            <span class="monitor-source-sub">${escapeHtml(row.cost)}</span>
+          </td>
+          <td class="number">${formatRatio(row.annualReturn)}</td>
+          <td class="number">${formatNumber(row.sharpe, 2)}</td>
+          <td class="number">${formatRatio(row.maxDrawdown)}</td>
+          <td><span class="badge ${row.status === "研究就绪" ? "badge-green" : "badge-gray"}">${escapeHtml(row.status)}</span></td>
+          <td>${formatDate(row.updatedAt)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  els.strategyTableBody.querySelectorAll("[data-strategy-id]").forEach((button) => {
+    button.addEventListener("click", () => openStrategyDetail(button.dataset.strategyId));
+  });
+}
+
+function compareStrategies(left, right) {
+  const key = state.strategySortKey;
+  const direction = state.strategySortDirection === "asc" ? 1 : -1;
+  const leftValue = left[key];
+  const rightValue = right[key];
+  if (typeof leftValue === "number" || typeof rightValue === "number") {
+    return compareNullableNumbers(leftValue, rightValue) * direction;
+  }
+  return String(leftValue ?? "").localeCompare(String(rightValue ?? ""), "zh-CN", { numeric: true }) * direction;
+}
+
+function sanitizeId(value) {
+  return String(value || "item")
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function activeStrategy() {
+  return strategyRows().find((row) => row.id === state.activeStrategyId);
+}
+
+function openStrategyDetail(strategyId) {
+  const row = strategyRows().find((item) => item.id === strategyId);
+  if (!row) return;
+  state.view = "strategy-detail";
+  state.activeStrategyId = strategyId;
+  renderStrategyDetail();
+}
+
+function closeStrategyDetail() {
+  state.view = "strategy";
+  state.activeStrategyId = null;
+  renderView();
+}
+
+function renderStrategyDetail() {
+  const row = activeStrategy();
+  if (!row) {
+    closeStrategyDetail();
+    return;
+  }
+  renderView();
+  els.strategyDetailView.innerHTML = `
+    <div class="breadcrumb">
+      <button type="button" class="breadcrumb-link" data-action="back-strategy">策略看板</button>
+      <span>›</span>
+      <strong>${escapeHtml(row.name)}</strong>
+    </div>
+
+    <section class="detail-hero">
+      <div>
+        <div class="detail-title-row">
+          <h2>${escapeHtml(row.name)}</h2>
+          <span class="badge ${row.status === "研究就绪" ? "badge-green" : "badge-gray"}">${escapeHtml(row.status)}</span>
+        </div>
+        <dl class="detail-meta">
+          <div><dt>Strategy ID</dt><dd><code>${escapeHtml(row.id)}</code></dd></div>
+          <div><dt>类型</dt><dd>${escapeHtml(row.type)}</dd></div>
+          <div><dt>使用因子</dt><dd>${escapeHtml(row.factors)}</dd></div>
+          <div><dt>股票池</dt><dd>${escapeHtml(row.universe)}</dd></div>
+          <div><dt>更新时间</dt><dd>${formatDate(row.updatedAt)}</dd></div>
+        </dl>
+      </div>
+      <div class="detail-actions">
+        <button type="button" class="secondary-action" data-action="back-strategy">返回策略看板</button>
+        <button type="button" class="primary-action compact" disabled>导出策略报告（待接入）</button>
+      </div>
+    </section>
+
+    <section class="metric-grid strategy-metrics">
+      <article class="metric-card"><span>年化收益</span><strong>${formatRatio(row.annualReturn)}</strong><small>待策略层产出</small></article>
+      <article class="metric-card"><span>夏普</span><strong>${formatNumber(row.sharpe, 2)}</strong><small>待策略层产出</small></article>
+      <article class="metric-card"><span>最大回撤</span><strong>${formatRatio(row.maxDrawdown)}</strong><small>待策略层产出</small></article>
+      <article class="metric-card"><span>换手率</span><strong>-</strong><small>待交易成本模型接入</small></article>
+    </section>
+
+    <section class="research-settings">
+      <div>
+        <h3>策略研究与回测参数</h3>
+        <p>这些参数作为未来策略回测请求输入。当前只展示预留口径，不会在前端触发计算。</p>
+      </div>
+      <div class="research-grid">
+        <label><span>研究区间</span><select><option>当前复现样本区间</option></select></label>
+        <label><span>股票池</span><select><option>${escapeHtml(row.universe)}</option></select></label>
+        <label><span>组合构建</span><select><option>${escapeHtml(row.type)}研究</option></select></label>
+        <label><span>调仓周期</span><select disabled><option>待策略层接入</option></select></label>
+        <label><span>手续费及滑点</span><select disabled><option>待策略层接入</option></select></label>
+      </div>
+    </section>
+
+    <section class="strategy-detail-grid">
+      <article class="chart-card large-chart">
+        <header><strong>策略收益曲线 / Equity Curve</strong><span>待接入</span></header>
+        <div class="chart-placeholder">等待策略回测数据</div>
+      </article>
+      <article class="chart-card">
+        <header><strong>风险指标</strong><span>待接入</span></header>
+        <div class="chart-placeholder">等待 Sharpe / Max DD / Volatility</div>
+      </article>
+      <article class="chart-card">
+        <header><strong>使用因子</strong><span>1 个</span></header>
+        <div class="strategy-factor-chip">${escapeHtml(row.factors)}</div>
+      </article>
+    </section>
+  `;
+
+  els.strategyDetailView.querySelectorAll("[data-action='back-strategy']").forEach((button) => {
+    button.addEventListener("click", closeStrategyDetail);
+  });
+}
+
+function taskRows() {
+  return [
+    {
+      name: "Alpha101 复现任务",
+      type: "复现",
+      currentGate: "G2",
+      progress: 60,
+      status: "需关注",
+      stages: [
+        { gate: "G0", name: "输入与规格检查", status: "passed", note: "specs 与运行参数可读取" },
+        { gate: "G1", name: "复现产物检查", status: "passed", note: "proof / evaluation / factor_frame 已生成" },
+        { gate: "G2", name: "研究评估检查", status: "warning", note: "部分因子需要人工复核" },
+        { gate: "G3", name: "策略回测检查", status: "pending", note: "策略层尚未接入" },
+        { gate: "G4", name: "人工审核", status: "pending", note: "等待研究员确认" },
+      ],
+      artifacts: "proof_report.json / evaluation.json / factor_frame.csv",
+    },
+    {
+      name: "GTJA191 因子库复现",
+      type: "复现",
+      currentGate: "G1",
+      progress: 20,
+      status: "运行中",
+      stages: [
+        { gate: "G0", name: "输入与规格检查", status: "passed", note: "因子列表已识别" },
+        { gate: "G1", name: "复现产物检查", status: "running", note: "等待产物完整生成" },
+        { gate: "G2", name: "研究评估检查", status: "pending", note: "预留子 Gate" },
+        { gate: "G3", name: "策略回测检查", status: "pending", note: "预留子 Gate" },
+        { gate: "G4", name: "人工审核", status: "pending", note: "预留子 Gate" },
+      ],
+      artifacts: "runtime/factor_lab/reports",
+    },
+    {
+      name: "AI Agent 因子挖掘候选流程",
+      type: "挖掘",
+      currentGate: "G0",
+      progress: 0,
+      status: "未实现",
+      stages: [
+        { gate: "G0", name: "候选因子登记", status: "pending", note: "未来接入 trial ledger" },
+        { gate: "G1", name: "安全与泄漏检查", status: "pending", note: "预留子 Gate" },
+        { gate: "G2", name: "复现与研究评估", status: "pending", note: "预留子 Gate" },
+        { gate: "G3", name: "策略候选检查", status: "pending", note: "预留子 Gate" },
+        { gate: "G4", name: "人工审核", status: "pending", note: "预留子 Gate" },
+      ],
+      artifacts: "待 Agent 提交",
+    },
+  ];
+}
+
+function taskStatusBadge(status) {
+  if (status === "运行中") return "badge-blue";
+  if (status === "需关注") return "badge-orange";
+  if (status === "已完成") return "badge-green";
+  return "badge-gray";
+}
+
+function stageClass(status) {
+  if (status === "passed") return "stage-passed";
+  if (status === "running") return "stage-running";
+  if (status === "warning") return "stage-warning";
+  return "stage-pending";
+}
+
+function renderTaskStats(rows) {
+  if (!els.taskStats) return;
+  els.taskStats.innerHTML = [
+    ["任务总数", rows.length, "支持大量任务滚动展示"],
+    ["运行中", rows.filter((row) => row.status === "运行中").length, "当前正在推进的任务"],
+    ["需关注", rows.filter((row) => row.status === "需关注").length, "Gate warning / failed"],
+    ["待接入", rows.filter((row) => row.status === "未实现").length, "尚无真实执行数据"],
+  ]
+    .map(
+      ([label, value, note]) => `
+        <article class="monitor-stat-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+          <small>${note}</small>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderTaskStagePanel(row) {
+  if (!els.taskStagePanel || !row) return;
+  els.taskStagePanel.innerHTML = `
+    <header>
+      <strong>${escapeHtml(row.name)}</strong>
+      <span>${escapeHtml(row.type)} / CLI</span>
+    </header>
+    <div class="task-stage-list">
+      ${row.stages
+        .map(
+          (stage) => `
+            <article class="task-stage-card ${stageClass(stage.status)}">
+              <span class="gate-pill">${escapeHtml(stage.gate)}</span>
+              <div>
+                <strong>${escapeHtml(stage.name)}</strong>
+                <small>${escapeHtml(stage.note)}</small>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+    <footer>
+      <strong>关联产物</strong>
+      <span>${escapeHtml(row.artifacts)}</span>
+    </footer>
+  `;
+}
+
+function renderTasks() {
+  const rows = taskRows();
+  renderTaskStats(rows);
+  if (!els.taskTableBody) return;
+  els.taskTableBody.innerHTML = rows
+    .map(
+      (row) => `
+        <tr>
+          <td><strong>${escapeHtml(row.name)}</strong></td>
+          <td><span class="badge badge-gray">${escapeHtml(row.type)}</span></td>
+          <td>${escapeHtml(row.currentGate)}</td>
+          <td class="number">
+            <div class="progress-track" aria-label="进度 ${row.progress}%">
+              <span class="progress-fill" style="width: ${row.progress}%"></span>
+            </div>
+            <small>${row.progress}%</small>
+          </td>
+          <td><span class="badge ${taskStatusBadge(row.status)}">${escapeHtml(row.status)}</span></td>
+        </tr>
+      `,
+    )
+    .join("");
+  renderTaskStagePanel(rows[0]);
+}
+
 function activeFactor() {
   return state.rawFactors.find((factor) => factor.id === state.activeFactorId);
 }
@@ -816,8 +1296,9 @@ function closeDetail() {
 }
 
 function showMainView(view) {
-  state.view = view === "monitor" ? "monitor" : "library";
+  state.view = ["monitor", "strategy", "tasks"].includes(view) ? view : "library";
   state.activeFactorId = null;
+  state.activeStrategyId = null;
   state.detailTab = "analysis";
   if (window.location.hash) {
     history.pushState("", document.title, window.location.pathname + window.location.search);
@@ -839,16 +1320,34 @@ function syncDetailFromHash() {
 function renderView() {
   const detailMode = state.view === "detail";
   const monitorMode = state.view === "monitor";
-  els.pageTitle.textContent = detailMode ? "因子详情" : monitorMode ? "因子监控" : "因子库";
-  els.libraryView.classList.toggle("hidden", detailMode || monitorMode);
+  const strategyMode = state.view === "strategy";
+  const strategyDetailMode = state.view === "strategy-detail";
+  const taskMode = state.view === "tasks";
+  els.pageTitle.textContent = detailMode
+    ? "因子详情"
+    : monitorMode
+      ? "因子监控"
+      : strategyMode
+        ? "策略看板"
+        : strategyDetailMode
+          ? "策略详情"
+          : taskMode
+            ? "任务监控"
+            : "因子库";
+  els.libraryView.classList.toggle("hidden", detailMode || monitorMode || strategyMode || strategyDetailMode || taskMode);
   els.monitorView.classList.toggle("hidden", !monitorMode);
+  els.strategyView.classList.toggle("hidden", !strategyMode);
+  els.taskView.classList.toggle("hidden", !taskMode);
+  els.strategyDetailView.classList.toggle("hidden", !strategyDetailMode);
   els.detailView.classList.toggle("hidden", !detailMode);
-  els.selectionBar.classList.toggle("hidden", detailMode || monitorMode);
+  els.selectionBar.classList.toggle("hidden", detailMode || monitorMode || strategyMode || strategyDetailMode || taskMode);
   els.navItems.forEach((item) => {
-    const activeView = detailMode ? "library" : state.view;
+    const activeView = detailMode ? "library" : strategyDetailMode ? "strategy" : state.view;
     item.classList.toggle("active", item.dataset.view === activeView);
   });
   if (monitorMode) renderMonitor();
+  if (strategyMode) renderStrategy();
+  if (taskMode) renderTasks();
 }
 
 function renderDetail() {
@@ -895,7 +1394,6 @@ function renderDetail() {
 
     <nav class="detail-tabs" aria-label="单因子报告切换">
       <button type="button" class="${state.detailTab === "analysis" ? "active" : ""}" data-tab="analysis">复现与研究分析</button>
-      <button type="button" disabled>策略回测（待接入）</button>
       <button type="button" class="${state.detailTab === "artifacts" ? "active" : ""}" data-tab="artifacts">验证产物（Artifacts）</button>
     </nav>
 
@@ -1230,6 +1728,20 @@ function bindEvents() {
       const key = header.dataset.sort;
       cycleSort(key);
       applyFilters();
+    });
+  });
+  document.querySelectorAll("th.monitor-sortable").forEach((header) => {
+    header.addEventListener("click", () => {
+      const key = header.dataset.monitorSort;
+      cycleMonitorSort(key);
+      renderMonitor();
+    });
+  });
+  document.querySelectorAll("th.strategy-sortable").forEach((header) => {
+    header.addEventListener("click", () => {
+      const key = header.dataset.strategySort;
+      cycleStrategySort(key);
+      renderStrategy();
     });
   });
   window.addEventListener("hashchange", () => {
