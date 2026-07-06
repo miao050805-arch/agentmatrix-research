@@ -1,11 +1,23 @@
+const urlParams = new URLSearchParams(window.location.search);
+const configuredApiHost = (
+  window.FACTOR_LAB_API_HOST ||
+  urlParams.get("api") ||
+  window.localStorage.getItem("FACTOR_LAB_API_HOST") ||
+  ""
+).replace(/\/+$/, "");
+if (urlParams.get("api")) {
+  window.localStorage.setItem("FACTOR_LAB_API_HOST", configuredApiHost);
+}
 const CLOUD_DEMO_MODE =
-  window.location.hostname.endsWith("github.io") ||
-  new URLSearchParams(window.location.search).has("demo");
-const API_HOST = CLOUD_DEMO_MODE
-  ? ""
-  : window.location.protocol.startsWith("http") && window.location.port === "8012"
-    ? window.location.origin
-    : "http://127.0.0.1:8012";
+  !configuredApiHost &&
+  (window.location.hostname.endsWith("github.io") || urlParams.has("demo"));
+const API_HOST = configuredApiHost
+  ? configuredApiHost
+  : CLOUD_DEMO_MODE
+    ? ""
+    : window.location.protocol.startsWith("http") && window.location.port === "8012"
+      ? window.location.origin
+      : "http://127.0.0.1:8012";
 const API_BASE = CLOUD_DEMO_MODE ? "" : `${API_HOST}/api/agents/factor-lab`;
 const DEMO_LIBRARY_URL = "./data/demo-factor-library.json";
 const PAGE_SIZE = 50;

@@ -46,9 +46,20 @@ dashboard_root = project_root / "frontend" / "factor-lab-dashboard"
 
 
 def _cors_origins() -> list[str]:
+    defaults = [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:8012",
+        "http://localhost:8012",
+        "https://miao050805-arch.github.io",
+        "null",
+    ]
+    public_origin = os.getenv("FACTOR_LAB_PUBLIC_ORIGIN")
+    if public_origin:
+        defaults.append(public_origin.strip())
     raw = os.getenv(
         "FACTOR_LAB_CORS_ORIGINS",
-        "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8012,http://localhost:8012,null",
+        ",".join(defaults),
     )
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
