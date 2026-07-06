@@ -6,11 +6,68 @@ const API_BASE = `${API_HOST}/api/agents/factor-lab`;
 const PAGE_SIZE = 50;
 const AUTO_REFRESH_INTERVAL_MS = 10000;
 const REQUEST_TIMEOUT_MS = 1800;
+const COVERAGE_WARN_THRESHOLD = 0.6;
+const COVERAGE_DANGER_THRESHOLD = 0.3;
+const LONG_SHORT_MEAN_HELP = "多空分组收益均值（日频，demo 数据）";
+const QUANT_API_FACTOR_META = {
+  roe_ttm: ["财务因子", "盈利能力"],
+  roa_ttm: ["财务因子", "盈利能力"],
+  net_margin: ["财务因子", "盈利能力"],
+  debt_to_asset: ["财务因子", "偿债能力"],
+  revenue_yoy: ["财务因子", "成长能力"],
+  profit_yoy: ["财务因子", "成长能力"],
+  eps_yoy: ["财务因子", "成长能力"],
+  asset_turnover: ["财务因子", "营运能力"],
+  log_price: ["价值因子", "价格水平"],
+  ret_1m: ["量价因子", "收益"],
+  ret_3m: ["量价因子", "收益"],
+  ret_6m: ["量价因子", "收益"],
+  ret_12m: ["量价因子", "收益"],
+  momentum_12_1: ["量价因子", "动量"],
+  reversal: ["量价因子", "反转"],
+  avg_amount_1m: ["量价因子", "成交额"],
+  log_amount_1m: ["量价因子", "成交额"],
+  turnover_proxy: ["量价因子", "换手"],
+  volume_ratio: ["量价因子", "成交量"],
+  up_ratio_1m: ["量价因子", "上涨比例"],
+  max_ret_1m: ["技术因子", "极值收益"],
+  min_ret_1m: ["技术因子", "极值收益"],
+  volatility_1m: ["技术因子", "波动率"],
+  volatility_3m: ["技术因子", "波动率"],
+  volatility_6m: ["技术因子", "波动率"],
+  ma_signal: ["技术因子", "均线"],
+  vol_convergence: ["技术因子", "量能收敛"],
+  illiquidity: ["技术因子", "流动性"],
+  high_low_1m: ["技术因子", "振幅"],
+  rsi_14: ["技术因子", "RSI"],
+  bb_position: ["技术因子", "布林带"],
+  ret_3m_vol_adj: ["技术因子", "风险调整收益"],
+  amplitude_1m: ["技术因子", "振幅"],
+};
+
+const AGENT_TASK_TEXT = {
+  title: "AI 任务(调试入口)",
+  subtitle:
+    "输入研究要求后,后台 agent 默认使用 Quant API 真实数据判断并执行复现、挖掘或评估。进度在任务监控中查看。",
+  boundaryTitle: "当前边界",
+  boundary:
+    "前端只提交自然语言要求,不上传文件、不选择 skill。数据默认从后端 Quant API 读取;agent 执行、流程判断与入库均在后端完成。",
+  instructionLabel: "研究要求",
+  instructionPlaceholder: "例如:使用 Quant API 真实数据复现 GTJA191 的 alpha010 并评估;或:挖掘一个低换手量价因子",
+  quarantineHint: "默认数据源: Quant API。agent 产出将进入 quarantine(隔离区),通过校验后才进入正式因子库。",
+  submit: "提交给 Agent",
+  submitting: "提交中...",
+  emptyWarning: "请输入研究要求",
+  submittedToast: "任务已提交,已生成 Trae 交接文件",
+  recentTitle: "最近提交",
+  emptyRecent: "暂无提交记录。提交一个任务后会出现在这里。",
+};
 
 const state = {
   rawFactors: [],
   filteredFactors: [],
   selectedIds: new Set(),
+  selectedAgentTaskIds: new Set(),
   category: "全部",
   library: "全部",
   proof: "all",
@@ -23,9 +80,12 @@ const state = {
   strategySortKey: null,
   strategySortDirection: "default",
   localConnected: false,
+  quantApiConfigured: false,
+  quantApiReachable: false,
   isLoading: false,
   autoRefreshTimer: null,
   monitorFilter: "all",
+  monitorCardFilter: null,
   monitorSortKey: null,
   monitorSortDirection: "default",
   dragSelect: {
@@ -36,7 +96,13 @@ const state = {
   view: "library",
   activeFactorId: null,
   activeStrategyId: null,
+  activeTaskId: null,
   detailTab: "analysis",
+  pendingFiles: [],
+  agentTasks: [],
+  agentTasksLoaded: false,
+  agentInstruction: "",
+  agentTaskSubmitting: false,
 };
 
 const els = {
@@ -50,6 +116,8 @@ const els = {
   taskView: document.querySelector("#taskView"),
   strategyDetailView: document.querySelector("#strategyDetailView"),
   detailView: document.querySelector("#detailView"),
+  agentTaskView: document.querySelector("#agentTaskView"),
+  settingsView: document.querySelector("#settingsView"),
   navItems: document.querySelectorAll(".nav-item[data-view]"),
   categoryTabs: document.querySelector("#categoryTabs"),
   libraryTabs: document.querySelector("#libraryTabs"),
@@ -65,6 +133,7 @@ const els = {
   selectedCount: document.querySelector("#selectedCount"),
   selectedReusable: document.querySelector("#selectedReusable"),
   selectedRerun: document.querySelector("#selectedRerun"),
+  selectionActions: document.querySelector("#selectionActions"),
   selectionBar: document.querySelector("#selectionBar"),
   errorPanel: document.querySelector("#errorPanel"),
   monitorStats: document.querySelector("#monitorStats"),
@@ -136,6 +205,26 @@ function compactName(value, edgeLength = 5, maxLength = 10) {
 function formatDate(value) {
   if (!value) return "-";
   return String(value).replace("T", " ").replace("Z", "").slice(0, 16);
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
+  return `${(size / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function showToast(message) {
+  const toast = document.createElement("div");
+  toast.className = "app-toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  window.setTimeout(() => toast.classList.add("visible"), 10);
+  window.setTimeout(() => {
+    toast.classList.remove("visible");
+    window.setTimeout(() => toast.remove(), 180);
+  }, 2200);
 }
 
 function proofBadge(status) {
@@ -213,6 +302,45 @@ function canOpenFactor(factor) {
   return Boolean(factor?.latest_job_id) && factor?.proof_status !== "missing";
 }
 
+function isProofFailed(factor) {
+  return factor?.proof_status === "failed";
+}
+
+function mutedDash(title = "") {
+  return `<span class="muted-dash" title="${escapeHtml(title)}">—</span>`;
+}
+
+function coverageClass(value) {
+  const coverage = toFiniteNumber(value);
+  if (coverage === null) return "";
+  if (coverage < COVERAGE_DANGER_THRESHOLD) return "coverage-danger";
+  if (coverage < COVERAGE_WARN_THRESHOLD) return "coverage-warning";
+  return "";
+}
+
+function coverageTitle(value) {
+  const coverage = toFiniteNumber(value);
+  if (coverage === null || coverage >= COVERAGE_WARN_THRESHOLD) return "";
+  return "覆盖率偏低，指标可信度受限";
+}
+
+function truthBadgeHtml(factor) {
+  if (isProofFailed(factor)) {
+    return mutedDash("复现失败时不展示真值校验结果");
+  }
+  const [truthText, truthClass] = truthBadge(factor.truth_status);
+  const ratio = formatRatio(factor.truth_exact_match_ratio);
+  const title = ratio === "-" ? truthText : `${truthText} · 匹配率 ${ratio}`;
+  return `<span class="badge ${truthClass}" title="${escapeHtml(title)}">${truthText}</span>`;
+}
+
+function factorMetricHtml(factor, key, formatter, title = "复现失败时不展示该指标") {
+  if (isProofFailed(factor)) {
+    return mutedDash(title);
+  }
+  return formatter(factor[key]);
+}
+
 function artifactUrl(factor, kind) {
   if (!factor?.latest_job_id) return "";
   const base = `${API_BASE}/artifacts/${encodeURIComponent(factor.latest_job_id)}/${kind}`;
@@ -222,28 +350,42 @@ function artifactUrl(factor, kind) {
   return base;
 }
 
-function tabButton(label, count, active, onClick) {
+function tabButton(label, count, active, onClick, disabled = false) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = active ? "tab active" : "tab";
   button.textContent = count === undefined ? label : `${label}${label === "全部" ? "" : ` (${count})`}`;
-  button.addEventListener("click", onClick);
+  if (disabled) {
+    button.disabled = true;
+    button.title = "暂无该类因子";
+  } else {
+    button.addEventListener("click", onClick);
+  }
   return button;
 }
 
 function renderTabs(payload) {
   const categories = payload.categories || {};
   const libraries = payload.libraries || {};
+  if (state.category !== "全部" && (categories[state.category] ?? 0) === 0) {
+    state.category = "全部";
+    state.library = "全部";
+  }
+  if (state.library !== "全部" && (libraries[state.library] ?? 0) === 0) {
+    state.library = "全部";
+  }
   els.categoryTabs.replaceChildren();
   ["全部", "量价因子", "技术因子", "财务因子", "规模因子", "价值因子", "自定义因子"].forEach((label) => {
+    const count = categories[label] ?? 0;
+    const disabled = label !== "全部" && count === 0;
     els.categoryTabs.appendChild(
-      tabButton(label, categories[label] ?? 0, state.category === label, () => {
+      tabButton(label, count, state.category === label, () => {
         state.category = label;
         state.library = "全部";
         state.page = 1;
         renderTabs({ categories: countCategories(), libraries: countLibraries() });
         applyFilters();
-      }),
+      }, disabled),
     );
   });
 
@@ -254,15 +396,16 @@ function renderTabs(payload) {
     return;
   }
 
-  ["全部", "WQ101", "GTJA191", "TA-Lib", "User Custom"].forEach((label) => {
+  ["全部", "WQ101", "GTJA191", "QuantAPI", "TA-Lib", "User Custom"].forEach((label) => {
     const count = label === "全部" ? state.rawFactors.length : libraries[label] ?? 0;
+    const disabled = label !== "全部" && count === 0;
     els.libraryTabs.appendChild(
       tabButton(label, count, state.library === label, () => {
         state.library = label;
         state.page = 1;
         renderTabs({ categories: countCategories(), libraries: countLibraries() });
         applyFilters();
-      }),
+      }, disabled),
     );
   });
 }
@@ -279,12 +422,16 @@ function updateConnectionStatus(ok, payload) {
 function updateQuantApiStatus(payload, failed = false) {
   if (!els.quantStatus) return;
   if (failed) {
+    state.quantApiConfigured = false;
+    state.quantApiReachable = false;
     els.quantStatus.className = "status-pill status-bad";
     els.quantStatus.textContent = "Quant API：检测失败";
     els.quantStatus.title = "未能通过本地 Flask 查询 Quant API 配置状态";
     return;
   }
   const configured = Boolean(payload?.token_configured);
+  state.quantApiConfigured = configured;
+  state.quantApiReachable = true;
   els.quantStatus.className = configured ? "status-pill status-ok" : "status-pill status-warn";
   els.quantStatus.textContent = configured ? "Quant API：已配置 token" : "Quant API：未配置 token";
   els.quantStatus.title = configured
@@ -354,6 +501,59 @@ async function checkQuantApiStatus() {
   }
 }
 
+async function loadOfficialQuantFactors(quantStatus) {
+  if (!quantStatus?.token_configured) {
+    return [];
+  }
+  try {
+    const response = await fetchWithTimeout(withCacheBust(`${API_BASE}/quant-api/factor-monthly/factors`));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const factors = Array.isArray(payload?.factors) ? payload.factors : [];
+    return factors.map(officialQuantFactorRow);
+  } catch (error) {
+    return [];
+  }
+}
+
+function officialQuantFactorRow(factorName) {
+  const [category, subcategory] = QUANT_API_FACTOR_META[factorName] || ["量价因子", "官方因子"];
+  return {
+    id: `QuantAPI:${factorName}`,
+    factor_name: factorName,
+    raw_factor_name: factorName,
+    library: "QuantAPI",
+    raw_library: "QuantAPI",
+    category,
+    category_inferred: false,
+    subcategory,
+    required_fields: [],
+    metadata: {
+      official_source: "Quant API factor_monthly",
+      not_reproduced_locally: true,
+    },
+    formula: "",
+    description: "官方 Quant API 月频因子，当前仅作为数据源展示，尚未进入本地复现流程。",
+    source: "quant_api",
+    source_id: "factor_monthly/factors",
+    implementation_status: "official_data_only",
+    proof_status: "missing",
+    truth_status: "not_applicable",
+    overall_status: "missing",
+    coverage_ratio: null,
+    rank_ic_mean: null,
+    rank_ic_ir: null,
+    long_short_mean: null,
+    truth_exact_match_ratio: null,
+    truth_max_abs_error: null,
+    latest_job_id: null,
+    latest_checked_at: null,
+    data_source: "Quant API",
+    dataset: {},
+    reuse_recommendation: "未复现",
+  };
+}
+
 async function loadData() {
   if (state.isLoading) {
     return;
@@ -363,11 +563,12 @@ async function loadData() {
   try {
     const healthy = await checkLocalHealth();
     if (!healthy) throw new Error("Local Flask service is offline");
-    checkQuantApiStatus();
+    const quantStatus = await checkQuantApiStatus();
     const response = await fetchWithTimeout(withCacheBust(`${API_BASE}/factor-library`));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
-    const normalizedPayload = normalizePayload(payload);
+    const officialFactors = await loadOfficialQuantFactors(quantStatus);
+    const normalizedPayload = normalizePayload(withOfficialQuantFactors(payload, officialFactors));
     state.rawFactors = normalizedPayload.factors || [];
     updateConnectionStatus(true, payload);
     els.errorPanel.classList.add("hidden");
@@ -402,6 +603,23 @@ function startAutoRefresh() {
     window.clearInterval(state.autoRefreshTimer);
   }
   state.autoRefreshTimer = window.setInterval(loadData, AUTO_REFRESH_INTERVAL_MS);
+}
+
+function withOfficialQuantFactors(payload, officialFactors) {
+  if (!officialFactors.length) {
+    return payload;
+  }
+  const existingIds = new Set((payload.factors || []).map((factor) => factor.id));
+  const mergedFactors = [
+    ...(payload.factors || []),
+    ...officialFactors.filter((factor) => !existingIds.has(factor.id)),
+  ];
+  return {
+    ...payload,
+    factors: mergedFactors,
+    categories: countBy(mergedFactors, "category", { 全部: mergedFactors.length }),
+    libraries: countBy(mergedFactors, "library"),
+  };
 }
 
 function normalizePayload(payload) {
@@ -638,9 +856,10 @@ function renderTable() {
 
   pageItems.forEach((factor) => {
     const [proofText, proofClass] = proofBadge(factor.proof_status);
-    const [truthText, truthClass] = truthBadge(factor.truth_status);
     const openable = canOpenFactor(factor);
     const displayName = compactName(factor.factor_name);
+    const coverageTone = coverageClass(factor.coverage_ratio);
+    const coverageHelp = coverageTitle(factor.coverage_ratio);
     const row = document.createElement("tr");
     row.className = [
       state.selectedIds.has(factor.id) ? "selected" : "",
@@ -660,12 +879,11 @@ function renderTable() {
       <td>${escapeHtml(factor.library)}</td>
       <td>${escapeHtml(factor.subcategory || "-")}</td>
       <td><span class="badge ${proofClass}">${proofText}</span></td>
-      <td><span class="badge ${truthClass}">${truthText}</span></td>
-      <td class="number">${formatRatio(factor.coverage_ratio)}</td>
-      <td class="number">${formatNumber(factor.rank_ic_mean, 4)}</td>
-      <td class="number">${formatNumber(factor.rank_ic_ir, 4)}</td>
-      <td class="number">${formatRatio(factor.truth_exact_match_ratio)}</td>
-      <td class="number">${formatNumber(factor.long_short_mean, 4)}</td>
+      <td>${truthBadgeHtml(factor)}</td>
+      <td class="number ${coverageTone}" title="${escapeHtml(coverageHelp)}">${formatRatio(factor.coverage_ratio)}</td>
+      <td class="number">${factorMetricHtml(factor, "rank_ic_mean", (value) => formatNumber(value, 4))}</td>
+      <td class="number">${factorMetricHtml(factor, "rank_ic_ir", (value) => formatNumber(value, 4))}</td>
+      <td class="number" title="${escapeHtml(LONG_SHORT_MEAN_HELP)}">${factorMetricHtml(factor, "long_short_mean", (value) => formatNumber(value, 4))}</td>
       <td>${formatDate(factor.latest_checked_at)}</td>
       <td><span class="recommendation ${recommendationClass(factor.reuse_recommendation)}">${escapeHtml(factor.reuse_recommendation)}</span></td>
     `;
@@ -754,12 +972,33 @@ function paginationItems(currentPage, totalPages) {
 }
 
 function renderSelectionSummary() {
+  if (state.view === "agent_task") {
+    renderAgentTaskSelectionSummary();
+    return;
+  }
   const selected = state.rawFactors.filter((factor) => state.selectedIds.has(factor.id));
   const reusable = selected.filter((factor) => factor.reuse_recommendation === "可复用").length;
   const rerun = selected.filter((factor) => factor.reuse_recommendation === "建议重跑").length;
   els.selectedCount.textContent = `已选择 ${selected.length} 个因子`;
   els.selectedReusable.textContent = `可复用 ${reusable} 个`;
   els.selectedRerun.textContent = `建议重跑 ${rerun} 个`;
+}
+
+function renderAgentTaskSelectionSummary() {
+  const selected = state.agentTasks.filter((task) => state.selectedAgentTaskIds.has(task.task_id));
+  els.selectedCount.textContent = `已选择 ${selected.length} 个任务`;
+  els.selectedReusable.textContent = `任务总数 ${state.agentTasks.length} 个`;
+  els.selectedRerun.textContent = "删除会移除 request.json、status.json 和 artifacts";
+  if (!els.selectionActions) return;
+  els.selectionActions.innerHTML = `
+    <button type="button" class="secondary-action compact" id="clearAgentTaskSelection" ${selected.length ? "" : "disabled"}>清空选择</button>
+    <button type="button" class="danger-action compact" id="deleteSelectedAgentTasks" ${selected.length ? "" : "disabled"}>删除所选</button>
+  `;
+  els.selectionActions.querySelector("#clearAgentTaskSelection")?.addEventListener("click", () => {
+    state.selectedAgentTaskIds.clear();
+    renderAgentTask();
+  });
+  els.selectionActions.querySelector("#deleteSelectedAgentTasks")?.addEventListener("click", deleteSelectedAgentTasks);
 }
 
 function monitorBucket(factor) {
@@ -785,14 +1024,30 @@ function monitorBucketLabel(bucket) {
   }[bucket] || "全部";
 }
 
-function monitorHint(factor, bucket) {
-  if (factor.proof_status === "failed") return "复现失败，建议先重跑";
-  if (factor.proof_status === "missing") return "缺少复现产物";
-  if (isTruthIssue(factor.truth_status)) return "真值异常，优先排查";
-  if (bucket === "missing") return "等待 IC/IR 或研究分析数据";
-  if (bucket === "strong") return "优先进入去重和稳定性复核";
-  if (bucket === "medium") return "可进入人工 review";
-  return "暂不建议进入策略层";
+function monitorHints(factor) {
+  const rules = [
+    {
+      match: (item) => item.proof_status === "failed",
+      text: "复现失败，建议重跑",
+    },
+    {
+      match: (item) => item.proof_status === "missing",
+      text: "缺少复现产物",
+    },
+    {
+      match: (item) => toFiniteNumber(item.coverage_ratio) !== null && toFiniteNumber(item.coverage_ratio) < COVERAGE_DANGER_THRESHOLD,
+      text: "覆盖率过低",
+    },
+    {
+      match: (item) => item.proof_status === "partial",
+      text: "真值待对照",
+    },
+    {
+      match: (item) => Math.abs(toFiniteNumber(item.rank_ic_ir) ?? Infinity) < 0.05,
+      text: "信号偏弱",
+    },
+  ];
+  return rules.filter((rule) => rule.match(factor)).slice(0, 2).map((rule) => rule.text);
 }
 
 function monitorSortValue(factor) {
@@ -811,15 +1066,15 @@ function renderMonitorStats() {
   const reusable = state.rawFactors.filter((factor) => factor.reuse_recommendation === "可复用").length;
   const review = state.rawFactors.filter((factor) => monitorBucket(factor) === "weak").length;
 
-  els.monitorStats.innerHTML = [
-    ["总因子数", total, "来自当前 specs 与 runtime 产物"],
-    ["有 IC/IR", withMetric, "已有可读研究指标"],
-    ["可复用", reusable, "按当前适配层建议"],
-    ["需关注", review, "复现失败、真值异常或弱指标"],
+  const cards = [
+    ["all", "总因子数", total, "来自当前 specs 与 runtime 产物"],
+    ["metric", "有 IC/IR", withMetric, "已有可读研究指标"],
+    ["reusable", "可复用", reusable, "按当前适配层建议"],
+    ["review", "需关注", review, "复现失败、真值异常或弱指标"],
   ]
     .map(
-      ([label, value, note]) => `
-        <article class="monitor-stat-card">
+      ([key, label, value, note]) => `
+        <article class="monitor-stat-card clickable ${state.monitorCardFilter === key ? "active" : ""}" data-monitor-card="${key}">
           <span>${label}</span>
           <strong>${value}</strong>
           <small>${note}</small>
@@ -827,6 +1082,14 @@ function renderMonitorStats() {
       `,
     )
     .join("");
+  els.monitorStats.innerHTML = cards;
+  els.monitorStats.querySelectorAll("[data-monitor-card]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const key = card.dataset.monitorCard;
+      state.monitorCardFilter = key === "all" || state.monitorCardFilter === key ? null : key;
+      renderMonitor();
+    });
+  });
 }
 
 function renderMonitorFilters() {
@@ -841,6 +1104,19 @@ function renderMonitor() {
   const factors = state.rawFactors
     .map((factor) => ({ factor, bucket: monitorBucket(factor) }))
     .filter((item) => state.monitorFilter === "all" || item.bucket === state.monitorFilter)
+    .filter((item) => {
+      if (!state.monitorCardFilter) return true;
+      if (state.monitorCardFilter === "metric") {
+        return toFiniteNumber(item.factor.rank_ic_mean) !== null || toFiniteNumber(item.factor.rank_ic_ir) !== null;
+      }
+      if (state.monitorCardFilter === "reusable") {
+        return item.factor.reuse_recommendation === "可复用";
+      }
+      if (state.monitorCardFilter === "review") {
+        return item.bucket === "weak";
+      }
+      return true;
+    })
     .sort((a, b) => {
       if (state.monitorSortKey && state.monitorSortDirection !== "default") {
         return compareMonitorRows(a, b);
@@ -864,9 +1140,11 @@ function renderMonitor() {
   els.monitorTableBody.innerHTML = factors
     .map(({ factor, bucket }) => {
       const [proofText, proofClass] = proofBadge(factor.proof_status);
-      const [truthText, truthClass] = truthBadge(factor.truth_status);
       const openable = canOpenFactor(factor);
       const name = compactName(factor.factor_name);
+      const hints = monitorHints(factor);
+      const coverageTone = coverageClass(factor.coverage_ratio);
+      const coverageHelp = coverageTitle(factor.coverage_ratio);
       return `
         <tr>
           <td><span class="monitor-dot ${bucket}"></span>${monitorBucketLabel(bucket)}</td>
@@ -885,11 +1163,11 @@ function renderMonitor() {
           </td>
           <td class="number">${formatNumber(factor.rank_ic_ir, 3)}</td>
           <td class="number">${formatNumber(factor.rank_ic_mean, 4)}</td>
-          <td class="number">${formatRatio(factor.coverage_ratio)}</td>
+          <td class="number ${coverageTone}" title="${escapeHtml(coverageHelp)}">${formatRatio(factor.coverage_ratio)}</td>
           <td class="number">${formatNumber(factor.long_short_mean, 4)}</td>
           <td><span class="badge ${proofClass}">${proofText}</span></td>
-          <td><span class="badge ${truthClass}">${truthText}</span></td>
-          <td>${escapeHtml(monitorHint(factor, bucket))}</td>
+          <td>${truthBadgeHtml(factor)}</td>
+          <td>${hints.length ? hints.map((hint) => `<span class="hint-chip">${escapeHtml(hint)}</span>`).join("") : mutedDash()}</td>
         </tr>
       `;
     })
@@ -1134,8 +1412,9 @@ function renderStrategyDetail() {
 }
 
 function taskRows() {
-  return [
+  const builtInRows = [
     {
+      id: "alpha101_reproduction",
       name: "Alpha101 复现任务",
       type: "复现",
       currentGate: "G2",
@@ -1151,6 +1430,7 @@ function taskRows() {
       artifacts: "proof_report.json / evaluation.json / factor_frame.csv",
     },
     {
+      id: "gtja191_reproduction",
       name: "GTJA191 因子库复现",
       type: "复现",
       currentGate: "G1",
@@ -1166,6 +1446,7 @@ function taskRows() {
       artifacts: "runtime/factor_lab/reports",
     },
     {
+      id: "ai_factor_mining",
       name: "AI Agent 因子挖掘候选流程",
       type: "挖掘",
       currentGate: "G0",
@@ -1181,9 +1462,71 @@ function taskRows() {
       artifacts: "待 Agent 提交",
     },
   ];
+  return [...agentTaskRows(), ...builtInRows];
+}
+
+function agentTaskStatusMeta(task) {
+  const status = String(task.status || "submitted");
+  const map = {
+    queued_for_trae: { label: "等待 Agent", progress: 10, stageStatus: "running", appStatus: "运行中" },
+    submitted: { label: "已提交", progress: 8, stageStatus: "running", appStatus: "运行中" },
+    running: { label: "运行中", progress: 45, stageStatus: "running", appStatus: "运行中" },
+    failed: { label: "需关注", progress: 35, stageStatus: "warning", appStatus: "需关注" },
+    completed: { label: "已完成", progress: 100, stageStatus: "passed", appStatus: "已完成" },
+  };
+  return map[status] || { label: status, progress: 10, stageStatus: "running", appStatus: "运行中" };
+}
+
+function agentTaskRows() {
+  return state.agentTasks.map((task) => {
+    const meta = agentTaskStatusMeta(task);
+    const summary = agentTaskSummary(task);
+    const taskId = task.task_id || task.id || "agent-task";
+    const artifacts = task.artifacts_dir || task.status_path || "runtime/factor_lab/agent_tasks";
+    const progress = Number(task.progress ?? meta.progress);
+    return {
+      id: taskId,
+      name: summary === "-" ? taskId : summary,
+      type: "Agent",
+      currentGate: task.current_gate || "G0",
+      progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : meta.progress,
+      status: meta.appStatus,
+      sourceStatus: task.status || "submitted",
+      stages: [
+        {
+          gate: "G0",
+          name: "任务接收",
+          status: "passed",
+          note: `已写入任务队列：${taskId}`,
+        },
+        {
+          gate: "G1",
+          name: "Agent 执行",
+          status: meta.stageStatus,
+          note: task.message || meta.label,
+        },
+        {
+          gate: "G2",
+          name: "产物校验",
+          status: meta.appStatus === "已完成" ? "passed" : "pending",
+          note: "等待 request/status/artifacts 校验结果",
+        },
+        {
+          gate: "G3",
+          name: "入库审核",
+          status: "pending",
+          note: "quarantine 通过后进入正式因子库",
+        },
+      ],
+      artifacts,
+    };
+  });
 }
 
 function taskStatusBadge(status) {
+  if (status === "运行中") return "badge-blue";
+  if (status === "需关注") return "badge-orange";
+  if (status === "已完成") return "badge-green";
   if (status === "运行中") return "badge-blue";
   if (status === "需关注") return "badge-orange";
   if (status === "已完成") return "badge-green";
@@ -1250,25 +1593,426 @@ function renderTasks() {
   const rows = taskRows();
   renderTaskStats(rows);
   if (!els.taskTableBody) return;
+  const activeRow = rows.find((row) => row.id === state.activeTaskId) || rows[0];
+  state.activeTaskId = activeRow?.id || null;
   els.taskTableBody.innerHTML = rows
     .map(
-      (row) => `
-        <tr>
-          <td><strong>${escapeHtml(row.name)}</strong></td>
-          <td><span class="badge badge-gray">${escapeHtml(row.type)}</span></td>
-          <td>${escapeHtml(row.currentGate)}</td>
-          <td class="number">
-            <div class="progress-track" aria-label="进度 ${row.progress}%">
-              <span class="progress-fill" style="width: ${row.progress}%"></span>
-            </div>
-            <small>${row.progress}%</small>
+      (row) => {
+        const currentStage = row.stages.find((stage) => stage.gate === row.currentGate);
+        const statusTitle = currentStage?.note || row.status;
+        return `
+          <tr class="${row.id === state.activeTaskId ? "selected" : ""}" data-task-id="${escapeHtml(row.id)}">
+            <td><strong>${escapeHtml(row.name)}</strong></td>
+            <td><span class="badge badge-gray">${escapeHtml(row.type)}</span></td>
+            <td>${escapeHtml(row.currentGate)}</td>
+            <td class="number">
+              <div class="progress-track" aria-label="进度 ${row.progress}%">
+                <span class="progress-fill" style="width: ${row.progress}%"></span>
+              </div>
+              <small>${row.progress}%</small>
+            </td>
+            <td><span class="badge ${taskStatusBadge(row.status)}" title="${escapeHtml(statusTitle)}">${escapeHtml(row.status)}</span></td>
+          </tr>
+        `;
+      },
+    )
+    .join("");
+  els.taskTableBody.onclick = (event) => {
+    const rowEl = event.target.closest("[data-task-id]");
+    if (!rowEl) return;
+    state.activeTaskId = rowEl.dataset.taskId;
+    renderTasks();
+  };
+  renderTaskStagePanel(activeRow);
+}
+
+function agentTaskSummary(task) {
+  const instruction = String(task.instruction || "").trim();
+  if (instruction) {
+    return instruction.length > 34 ? `${instruction.slice(0, 34)}...` : instruction;
+  }
+  const fileNames = (task.files || []).map((file) => file.name).filter(Boolean);
+  return fileNames.length ? fileNames.join(" / ") : "-";
+}
+
+function addPendingFiles(fileList) {
+  const incoming = Array.from(fileList || []);
+  incoming.forEach((file) => {
+    const exists = state.pendingFiles.some(
+      (item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified,
+    );
+    if (!exists) {
+      state.pendingFiles.push(file);
+    }
+  });
+  renderAgentTask();
+}
+
+function removePendingFile(index) {
+  state.pendingFiles.splice(index, 1);
+  renderAgentTask();
+}
+
+async function loadAgentTasks() {
+  if (state.agentTasksLoaded) return;
+  try {
+    const response = await fetchWithTimeout(withCacheBust(`${API_BASE}/agent-tasks`));
+    if (!response.ok) return;
+    const payload = await response.json();
+    state.agentTasks = Array.isArray(payload.items) ? payload.items : [];
+  } finally {
+    state.agentTasksLoaded = true;
+    renderAgentTask();
+    if (state.view === "tasks") renderTasks();
+  }
+}
+
+async function submitTaskRequest(payload) {
+  // TODO(backend agent ready):
+  //   switch this isolated function to the real agent task endpoint if needed.
+  //   submitAgentTask should not need to change.
+  const response = await fetch(`${API_BASE}/agent-tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `HTTP ${response.status}`);
+  }
+  return await response.json();
+}
+
+async function submitAgentTask() {
+  const instruction = state.agentInstruction.trim();
+  if (!instruction) {
+    showToast(AGENT_TASK_TEXT.emptyWarning);
+    return;
+  }
+
+  const payload = {
+    schema_version: "agent_task_request_v1",
+    instruction,
+    files: [],
+    namespace: "quarantine",
+    data_source: "quant_api",
+    requires_quant_api: true,
+    requested_at: new Date().toISOString(),
+  };
+
+  state.agentTaskSubmitting = true;
+  renderAgentTask();
+  try {
+    const result = await submitTaskRequest(payload);
+    state.agentTasks.unshift({ ...payload, ...result });
+    state.pendingFiles = [];
+    showToast(AGENT_TASK_TEXT.submittedToast);
+  } catch (error) {
+    showToast(`Submit failed: ${error.message}`);
+  } finally {
+    state.agentTaskSubmitting = false;
+    renderAgentTask();
+    if (state.view === "tasks") renderTasks();
+  }
+}
+
+function openAgentTaskProgress(taskId) {
+  state.view = "tasks";
+  state.activeTaskId = taskId;
+  window.location.hash = `task=${encodeURIComponent(taskId)}`;
+  renderView();
+}
+
+async function deleteAgentTask(taskId) {
+  if (!taskId) return;
+  const ok = window.confirm(`删除任务 ${taskId}？这会同时删除本地 request.json、status.json 和 artifacts 目录。`);
+  if (!ok) return;
+
+  try {
+    const response = await fetch(`${API_BASE}/agent-tasks/${encodeURIComponent(taskId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `HTTP ${response.status}`);
+    }
+    state.agentTasks = state.agentTasks.filter((task) => task.task_id !== taskId);
+    if (state.activeTaskId === taskId) {
+      state.activeTaskId = state.agentTasks[0]?.task_id || null;
+    }
+    showToast("任务已删除");
+    renderAgentTask();
+    if (state.view === "tasks") renderTasks();
+  } catch (error) {
+    showToast(`Delete failed: ${error.message}`);
+  }
+}
+
+async function deleteAgentTaskById(taskId) {
+  const response = await fetch(`${API_BASE}/agent-tasks/${encodeURIComponent(taskId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `HTTP ${response.status}`);
+  }
+}
+
+async function deleteSelectedAgentTasks() {
+  const taskIds = [...state.selectedAgentTaskIds];
+  if (!taskIds.length) return;
+  const ok = window.confirm(`删除所选 ${taskIds.length} 个任务？这会同时删除本地 request.json、status.json 和 artifacts 目录。`);
+  if (!ok) return;
+
+  try {
+    await Promise.all(taskIds.map(deleteAgentTaskById));
+    state.agentTasks = state.agentTasks.filter((task) => !state.selectedAgentTaskIds.has(task.task_id));
+    if (state.activeTaskId && state.selectedAgentTaskIds.has(state.activeTaskId)) {
+      state.activeTaskId = state.agentTasks[0]?.task_id || null;
+    }
+    state.selectedAgentTaskIds.clear();
+    showToast("任务已删除");
+    renderAgentTask();
+    if (state.view === "tasks") renderTasks();
+  } catch (error) {
+    showToast(`Delete failed: ${error.message}`);
+  }
+}
+
+async function openAgentTaskFolder(taskId) {
+  if (!taskId) return;
+  try {
+    const response = await fetch(`${API_BASE}/agent-tasks/${encodeURIComponent(taskId)}/open-folder`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `HTTP ${response.status}`);
+    }
+    showToast("已打开任务文件夹");
+  } catch (error) {
+    showToast(`Open folder failed: ${error.message}`);
+  }
+}
+
+function renderAgentTask() {
+  if (!els.agentTaskView) return;
+  const taskRows = state.agentTasks
+    .map(
+      (task) => `
+        <tr class="${state.selectedAgentTaskIds.has(task.task_id) ? "selected" : ""}" data-agent-task-row="${escapeHtml(task.task_id)}" title="双击打开任务文件夹">
+          <td>
+            <input type="checkbox" data-agent-task-select="${escapeHtml(task.task_id)}" ${state.selectedAgentTaskIds.has(task.task_id) ? "checked" : ""} aria-label="选择 ${escapeHtml(task.task_id)}" />
           </td>
-          <td><span class="badge ${taskStatusBadge(row.status)}">${escapeHtml(row.status)}</span></td>
+          <td><code class="agent-task-id" title="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)}</code></td>
+          <td class="agent-task-summary" title="${escapeHtml(agentTaskSummary(task))}">${escapeHtml(agentTaskSummary(task))}</td>
+          <td>
+            <span class="badge badge-gray">${escapeHtml(task.status || "submitted")}</span>
+            ${task.is_placeholder ? '<span class="badge badge-gray">\u6f14\u793a</span>' : ""}
+          </td>
+          <td>${formatDate(task.requested_at)}</td>
+          <td>
+            <div class="agent-task-actions">
+              <button type="button" class="text-button" data-agent-task-progress="${escapeHtml(task.task_id)}">\u67e5\u770b\u8fdb\u5ea6</button>
+              <button type="button" class="text-button danger" data-agent-task-delete="${escapeHtml(task.task_id)}">删除</button>
+            </div>
+          </td>
         </tr>
       `,
     )
     .join("");
-  renderTaskStagePanel(rows[0]);
+
+  els.agentTaskView.innerHTML = `
+    <section class="monitor-head">
+      <div>
+        <h2>${AGENT_TASK_TEXT.title}</h2>
+        <p>${AGENT_TASK_TEXT.subtitle}</p>
+      </div>
+      <div class="monitor-note">
+        <strong>${AGENT_TASK_TEXT.boundaryTitle}</strong>
+        <span>${AGENT_TASK_TEXT.boundary}</span>
+      </div>
+    </section>
+
+    <section class="agent-task-card">
+      <label class="agent-task-field">
+        <span>${AGENT_TASK_TEXT.instructionLabel}</span>
+        <textarea id="agentInstructionInput" rows="5" placeholder="${AGENT_TASK_TEXT.instructionPlaceholder}">${escapeHtml(state.agentInstruction)}</textarea>
+      </label>
+
+      <div class="agent-task-foot">
+        <span>${AGENT_TASK_TEXT.quarantineHint}</span>
+      </div>
+
+      <div class="agent-task-foot">
+        <span>\u4f4e\u624b\u52a8\u6a21\u5f0f: \u4e0d\u62d6\u6587\u4ef6\u3001\u4e0d\u9009\u62e9\u6d41\u7a0b,\u7531\u540e\u7aef agent \u57fa\u4e8e Quant API \u81ea\u52a8\u5224\u65ad\u3002</span>
+        <button type="button" class="primary-action compact" id="agentSubmitButton" ${state.agentTaskSubmitting ? "disabled" : ""}>
+          ${state.agentTaskSubmitting ? AGENT_TASK_TEXT.submitting : AGENT_TASK_TEXT.submit}
+        </button>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <header class="table-card-head">
+        <strong>${AGENT_TASK_TEXT.recentTitle}</strong>
+        <span>\u672c\u4f1a\u8bdd\u5185\u5b58\u8bb0\u5f55,\u5237\u65b0\u9875\u9762\u540e\u6e05\u7a7a\u3002</span>
+      </header>
+      <div class="table-scroll">
+        <table class="agent-task-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="agentTaskSelectAll" ${state.agentTasks.length && state.agentTasks.every((task) => state.selectedAgentTaskIds.has(task.task_id)) ? "checked" : ""} aria-label="选择全部任务" /></th>
+              <th>\u4efb\u52a1 ID</th>
+              <th>\u6458\u8981</th>
+              <th>\u72b6\u6001</th>
+              <th>\u63d0\u4ea4\u65f6\u95f4</th>
+              <th>\u64cd\u4f5c</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              taskRows ||
+              `<tr><td class="empty-cell" colspan="6">${AGENT_TASK_TEXT.emptyRecent}</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+
+  const instructionInput = els.agentTaskView.querySelector("#agentInstructionInput");
+  const submitButton = els.agentTaskView.querySelector("#agentSubmitButton");
+
+  instructionInput?.addEventListener("input", (event) => {
+    state.agentInstruction = event.target.value;
+  });
+  submitButton?.addEventListener("click", submitAgentTask);
+  els.agentTaskView.querySelectorAll("[data-agent-task-row]").forEach((row) => {
+    row.addEventListener("dblclick", (event) => {
+      if (event.target.closest("button") || event.target.closest("input")) return;
+      openAgentTaskFolder(row.dataset.agentTaskRow);
+    });
+  });
+  els.agentTaskView.querySelectorAll("[data-agent-task-progress]").forEach((button) => {
+    button.addEventListener("click", () => openAgentTaskProgress(button.dataset.agentTaskProgress));
+  });
+  els.agentTaskView.querySelectorAll("[data-agent-task-select]").forEach((checkbox) => {
+    checkbox.addEventListener("change", (event) => {
+      const taskId = event.target.dataset.agentTaskSelect;
+      if (event.target.checked) {
+        state.selectedAgentTaskIds.add(taskId);
+      } else {
+        state.selectedAgentTaskIds.delete(taskId);
+      }
+      renderAgentTask();
+    });
+  });
+  els.agentTaskView.querySelector("#agentTaskSelectAll")?.addEventListener("change", (event) => {
+    if (event.target.checked) {
+      state.agentTasks.forEach((task) => state.selectedAgentTaskIds.add(task.task_id));
+    } else {
+      state.selectedAgentTaskIds.clear();
+    }
+    renderAgentTask();
+  });
+  renderSelectionSummary();
+}
+
+function connectionCard(title, statusText, statusClass, rows) {
+  return `
+    <article class="settings-page-card">
+      <div class="settings-page-card-head">
+        <strong>${escapeHtml(title)}</strong>
+        <span class="settings-page-pill ${statusClass}">${escapeHtml(statusText)}</span>
+      </div>
+      <dl class="settings-page-list">
+        ${rows
+          .map(
+            ([label, value]) => `
+              <div>
+                <dt>${escapeHtml(label)}</dt>
+                <dd>${value}</dd>
+              </div>
+            `,
+          )
+          .join("")}
+      </dl>
+    </article>
+  `;
+}
+
+function renderSettings() {
+  if (!els.settingsView) return;
+  const localStatusText = state.localConnected ? "已连接" : "未连接";
+  const quantStatusText = state.quantApiReachable
+    ? state.quantApiConfigured
+      ? "已配置"
+      : "未配置 token"
+    : "检测失败";
+  const quantStatusClass = state.quantApiConfigured ? "ok" : state.quantApiReachable ? "warn" : "bad";
+
+  els.settingsView.innerHTML = `
+    <section class="settings-page-head">
+      <div>
+        <h2>设置</h2>
+        <p>这里集中展示本地服务、官方 Quant API、AI Agent 接入和前端显示偏好。当前页面只读展示配置状态，不保存 token，也不启动任何 agent。</p>
+      </div>
+      <div class="settings-page-note">
+        <strong>当前边界</strong>
+        <span>前端只消费 Flask 与本地 runtime 产物；真实计算、数据抓取和 Agent 编排都留在后端或执行侧。</span>
+      </div>
+    </section>
+
+    <section class="settings-page-grid" aria-label="连接配置">
+      ${connectionCard("本地 Flask 服务", localStatusText, state.localConnected ? "ok" : "bad", [
+        ["接口地址", `<code>${escapeHtml(API_BASE)}</code>`],
+        ["健康检查", "<code>/health</code>"],
+        ["用途", "读取因子库、报告产物、运行状态与官方数据代理"],
+      ])}
+      ${connectionCard("官方 Quant API", quantStatusText, quantStatusClass, [
+        ["接入方式", "浏览器 → 本地 Flask → 官方 Quant API"],
+        ["Token 位置", "<code>FACTOR_LAB_QUANT_API_TOKEN</code> 或 <code>QUANT_API_TOKEN</code>"],
+        ["安全说明", "前端不接触 token，不直接访问公网数据接口"],
+      ])}
+      ${connectionCard("云端信息库", "未同步", "warn", [
+        ["当前状态", "预留同步入口，后续用于团队共享已审核因子与报告"],
+        ["同步对象", "因子元信息、审核状态、报告摘要、可追溯 artifact"],
+        ["当前策略", "本地优先，云端只读展示待接入"],
+      ])}
+      ${connectionCard("AI Agent 接入", "待接入", "warn", [
+        ["外部 Agent", "Trae / Claude Code / Codex 等工具预留统一提交入口"],
+        ["内部 Agent", "Hermes / Factor Mining Agent / Strategy Agent 预留能力位"],
+        ["当前边界", "此页只展示接口位置，不触发自动挖掘、复现或回测"],
+      ])}
+    </section>
+
+    <section class="settings-page-panel">
+      <header>
+        <strong>显示偏好与阈值</strong>
+        <span>当前为前端常量，后续可迁移到配置文件。</span>
+      </header>
+      <div class="settings-page-kv-grid">
+        <div><span>因子库每页行数</span><strong>${PAGE_SIZE}</strong></div>
+        <div><span>自动刷新间隔</span><strong>${AUTO_REFRESH_INTERVAL_MS / 1000}s</strong></div>
+        <div><span>覆盖率警告阈值</span><strong>${Math.round(COVERAGE_WARN_THRESHOLD * 100)}%</strong></div>
+        <div><span>覆盖率危险阈值</span><strong>${Math.round(COVERAGE_DANGER_THRESHOLD * 100)}%</strong></div>
+      </div>
+    </section>
+
+    <section class="settings-page-panel">
+      <header>
+        <strong>接口契约预留</strong>
+        <span>这些是前端当前或后续计划消费的数据结构。</span>
+      </header>
+      <div class="settings-page-contracts">
+        <span><code>factor_lab_view_v1</code>：因子库、因子详情、报告产物</span>
+        <span><code>factor_lab_view_v1.1</code>：官方 Quant API 的 official 命名空间</span>
+        <span><code>agent_task_request_v1</code>：AI 任务发起请求（要求文本 + 文件元信息，不含 skill；流程由后端 agent 判断）。当前为占位，后端接入后生效。</span>
+        <span><code>strategy_monitor_view_v1</code>：策略看板与策略详情预留</span>
+        <span><code>gate_monitor_view_v1</code>：任务监控与 Gate 可视化预留</span>
+      </div>
+    </section>
+  `;
 }
 
 function activeFactor() {
@@ -1296,9 +2040,10 @@ function closeDetail() {
 }
 
 function showMainView(view) {
-  state.view = ["monitor", "strategy", "tasks"].includes(view) ? view : "library";
+  state.view = ["monitor", "strategy", "tasks", "agent_task", "settings"].includes(view) ? view : "library";
   state.activeFactorId = null;
   state.activeStrategyId = null;
+  state.activeTaskId = null;
   state.detailTab = "analysis";
   if (window.location.hash) {
     history.pushState("", document.title, window.location.pathname + window.location.search);
@@ -1323,6 +2068,8 @@ function renderView() {
   const strategyMode = state.view === "strategy";
   const strategyDetailMode = state.view === "strategy-detail";
   const taskMode = state.view === "tasks";
+  const agentTaskMode = state.view === "agent_task";
+  const settingsMode = state.view === "settings";
   els.pageTitle.textContent = detailMode
     ? "因子详情"
     : monitorMode
@@ -1333,21 +2080,41 @@ function renderView() {
           ? "策略详情"
           : taskMode
             ? "任务监控"
-            : "因子库";
-  els.libraryView.classList.toggle("hidden", detailMode || monitorMode || strategyMode || strategyDetailMode || taskMode);
+            : agentTaskMode
+              ? "AI 任务(调试)"
+              : settingsMode
+                ? "设置"
+                : "因子库";
+  els.libraryView.classList.toggle(
+    "hidden",
+    detailMode || monitorMode || strategyMode || strategyDetailMode || taskMode || agentTaskMode || settingsMode,
+  );
   els.monitorView.classList.toggle("hidden", !monitorMode);
   els.strategyView.classList.toggle("hidden", !strategyMode);
   els.taskView.classList.toggle("hidden", !taskMode);
   els.strategyDetailView.classList.toggle("hidden", !strategyDetailMode);
   els.detailView.classList.toggle("hidden", !detailMode);
-  els.selectionBar.classList.toggle("hidden", detailMode || monitorMode || strategyMode || strategyDetailMode || taskMode);
+  els.agentTaskView?.classList.toggle("hidden", !agentTaskMode);
+  els.settingsView?.classList.toggle("hidden", !settingsMode);
+  els.selectionBar.classList.toggle(
+    "hidden",
+    detailMode || monitorMode || strategyMode || strategyDetailMode || taskMode || settingsMode,
+  );
   els.navItems.forEach((item) => {
     const activeView = detailMode ? "library" : strategyDetailMode ? "strategy" : state.view;
     item.classList.toggle("active", item.dataset.view === activeView);
   });
   if (monitorMode) renderMonitor();
   if (strategyMode) renderStrategy();
-  if (taskMode) renderTasks();
+  if (taskMode) {
+    renderTasks();
+    loadAgentTasks();
+  }
+  if (agentTaskMode) {
+    renderAgentTask();
+    loadAgentTasks();
+  }
+  if (settingsMode) renderSettings();
 }
 
 function renderDetail() {
@@ -1390,6 +2157,7 @@ function renderDetail() {
       </div>
     </section>
 
+    ${renderFactorDefinition(factor)}
     ${renderResearchSettings(factor)}
 
     <nav class="detail-tabs" aria-label="单因子报告切换">
@@ -1415,23 +2183,77 @@ function renderDetail() {
       if (url) window.open(url, "_blank", "noopener,noreferrer");
     });
   });
+  els.detailView.querySelectorAll("[data-copy-formula]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyFormula || "");
+        button.textContent = "已复制";
+        window.setTimeout(() => {
+          button.textContent = "复制公式";
+        }, 1200);
+      } catch {
+        button.textContent = "复制失败";
+      }
+    });
+  });
+}
+
+function factorFormula(factor) {
+  return factor.formula || factor.expression || factor.definition || factor.raw_formula || "";
+}
+
+function factorLookback(factor) {
+  return factor.lookback || factor.window || factor.n_days || factor.n_dates || "待接入";
+}
+
+function factorSourceRef(factor) {
+  const number = factor.factor_name?.match(/\d+$/)?.[0];
+  if (factor.library && number) return `${factor.library} #${number}`;
+  return factor.library || "待接入";
+}
+
+function renderFactorDefinition(factor) {
+  const formula = factorFormula(factor);
+  const formulaText = formula || "公式待接入";
+  return `
+    <section class="factor-definition-card" aria-label="因子定义">
+      <div class="factor-definition-head">
+        <div>
+          <strong>因子定义</strong>
+          <span>展示当前 specs / view model 可读取的定义信息，不参与前端计算。</span>
+        </div>
+        <button type="button" class="secondary-action compact" data-copy-formula="${escapeHtml(formulaText)}" ${formula ? "" : "disabled"}>复制公式</button>
+      </div>
+      <pre class="factor-formula"><code>${escapeHtml(formulaText)}</code></pre>
+      <dl class="definition-meta">
+        <div><dt>Lookback</dt><dd>${escapeHtml(factorLookback(factor))}</dd></div>
+        <div><dt>来源引用</dt><dd>${escapeHtml(factorSourceRef(factor))}</dd></div>
+      </dl>
+    </section>
+  `;
 }
 
 function renderResearchSettings(factor) {
   return `
-    <section class="research-settings-card" aria-label="研究与回测参数">
+    <section class="research-settings-card" aria-label="复现口径与研究区">
       <div class="settings-head">
         <div>
-          <strong>研究与回测参数</strong>
-          <span>这些参数是复现与研究分析、策略回测的共同前提。当前仅展示口径；接入研究分析数据后，切换区间会同步更新 IC、IR 和图表。</span>
+          <strong>复现口径</strong>
+          <span>本因子复现时使用的固定口径，不可调整；调整口径请使用下方研究区。</span>
         </div>
         <dl>
-          <div><dt>当前研究区间</dt><dd>当前复现样本区间</dd></div>
-          <div><dt>指标更新时间</dt><dd>${formatDate(factor.latest_checked_at)}</dd></div>
+          <div><dt>股票池</dt><dd>当前样本股票池</dd></div>
+          <div><dt>频率</dt><dd>日频</dd></div>
+          <div><dt>研究区间</dt><dd>当前复现样本区间</dd></div>
+          <div><dt>真值对照口径</dt><dd>${truthValue(factor.truth_status)}</dd></div>
           <div><dt>数据来源</dt><dd>${escapeHtml(factor.data_source || "-")}</dd></div>
         </dl>
       </div>
 
+      <div class="research-mode-head">
+        <strong>研究区（口径可调）</strong>
+        <span>研究模式，结果不代表复现结论</span>
+      </div>
       <div class="settings-grid">
         <label>
           <span>研究区间</span>
@@ -1465,39 +2287,6 @@ function renderResearchSettings(factor) {
           <select>
             <option selected>10组</option>
             <option>5组（待接入）</option>
-          </select>
-        </label>
-        <label>
-          <span>调仓周期</span>
-          <select disabled>
-            <option selected>待策略层接入</option>
-            <option>1天</option>
-            <option>5天</option>
-            <option>20天</option>
-          </select>
-        </label>
-        <label>
-          <span>调仓时间</span>
-          <select disabled>
-            <option selected>待策略层接入</option>
-            <option>收盘价</option>
-            <option>次日开盘</option>
-          </select>
-        </label>
-        <label>
-          <span>过滤涨停及停牌股</span>
-          <select disabled>
-            <option selected>待真实交易状态数据</option>
-            <option>是</option>
-            <option>否</option>
-          </select>
-        </label>
-        <label>
-          <span>手续费及滑点</span>
-          <select disabled>
-            <option selected>待策略层接入</option>
-            <option>千三佣金 + 千一印花税 + 无滑点</option>
-            <option>万三佣金 + 千一印花税 + 万一滑点</option>
           </select>
         </label>
       </div>

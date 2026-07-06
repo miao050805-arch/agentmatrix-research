@@ -34,6 +34,14 @@
             <span class="nav-icon">G</span>
             <span>任务监控</span>
           </button>
+          <button class="nav-item" type="button" data-view="agent_task">
+            <span class="nav-icon">AI</span>
+            <span>AI 任务(调试)</span>
+          </button>
+          <button class="nav-item" type="button" data-view="settings">
+            <span class="nav-icon">⚙</span>
+            <span>设置</span>
+          </button>
         </nav>
 
         <div class="sidebar-footer">
@@ -137,7 +145,6 @@
                     <th class="number sortable" data-sort="coverage_ratio">覆盖率</th>
                     <th class="number sortable" data-sort="rank_ic_mean">IC均值</th>
                     <th class="number sortable" data-sort="rank_ic_ir">IR均值</th>
-                    <th class="number sortable" data-sort="truth_exact_match_ratio">真值匹配率</th>
                     <th class="number sortable" data-sort="long_short_mean">多空均值</th>
                     <th>最近校验时间</th>
                     <th>复用建议</th>
@@ -207,10 +214,10 @@
               <h2>策略看板</h2>
               <p>当前仅展示策略层预留接口与研究占位结果，不触发回测、不执行交易逻辑。</p>
             </div>
-            <div class="strategy-note">
-              <strong>预留接口</strong>
+            <details class="contract-drawer">
+              <summary>查看接口契约</summary>
               <span>strategy_monitor_view_v1：strategy_id、factors[]、universe、rebalance、cost_model、metrics、status、updated_at。</span>
-            </div>
+            </details>
           </section>
 
           <section id="strategyStats" class="monitor-stats" aria-label="策略统计"></section>
@@ -281,15 +288,20 @@
 
         <section id="detailView" class="content detail-view hidden" aria-label="单因子详情"></section>
 
+        <section id="agentTaskView" class="content agent-task-view hidden" aria-label="AI 任务调试入口"></section>
+
+        <section id="settingsView" class="content settings-view hidden" aria-label="设置"></section>
+
         <footer id="selectionBar" class="selection-bar">
           <div class="selection-summary">
             <strong id="selectedCount">已选择 0 个因子</strong>
             <span id="selectedReusable">可复用 0 个</span>
             <span id="selectedRerun">建议重跑 0 个</span>
           </div>
+          <div id="selectionActions" class="selection-actions"></div>
         </footer>
       </main>
     </div>
-    <script src="./app.js?v=20260624-health-check"></script>
+    <script src="./app.js?v=20260706-agent-task-bulk-delete"></script>
   </body>
 </html>
