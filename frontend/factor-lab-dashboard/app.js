@@ -860,6 +860,7 @@ function marketBucket(factor) {
   if (
     raw.includes("wq101") ||
     raw.includes("alpha101") ||
+    raw.includes("alpha158") ||
     raw.includes("worldquant") ||
     raw.includes("gtja191") ||
     raw.includes("alpha191") ||
