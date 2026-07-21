@@ -4,8 +4,8 @@ window.FACTOR_LAB_API_HOST = "";
 
 // Supabase public read endpoint for the static dashboard. This key is safe to
 // expose only when Row Level Security allows SELECT on public dashboard tables.
-window.FACTOR_LAB_SUPABASE_URL = "https://wdgflnxymmqfliajreyb.supabase.co";
-window.FACTOR_LAB_SUPABASE_ANON_KEY = "sb_publishable_DIM6YTiLERXHQwN-6wxtfA_pl3MQcxg";
+window.FACTOR_LAB_SUPABASE_URL = "https://rebyrzrvnfbwvmbjvhzj.supabase.co";
+window.FACTOR_LAB_SUPABASE_ANON_KEY = "sb_publishable_ZHAM5wQWZh_Wng4TaL-fDg_XlFBcB6j";
 window.FACTOR_LAB_SUPABASE_FACTOR_TABLE = "public_dashboard_factors";
 
 // Frontend-only access gate for the static dashboard. This is a convenience
