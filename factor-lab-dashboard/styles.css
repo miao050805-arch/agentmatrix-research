@@ -967,7 +967,7 @@ select,
 
 .factor-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1540px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -985,6 +985,8 @@ td {
   text-align: left;
   vertical-align: middle;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 th {
@@ -1015,21 +1017,53 @@ tbody tr.selected {
 
 .factor-table th:nth-child(2),
 .factor-table td:nth-child(2) {
-  width: 176px;
+  width: 190px;
 }
 
 .factor-table th:nth-child(3),
-.factor-table td:nth-child(3),
+.factor-table td:nth-child(3) {
+  width: 92px;
+}
+
 .factor-table th:nth-child(4),
 .factor-table td:nth-child(4) {
-  width: 120px;
+  width: 118px;
 }
 
 .factor-table th:nth-child(5),
-.factor-table td:nth-child(5),
+.factor-table td:nth-child(5) {
+  width: 128px;
+}
+
 .factor-table th:nth-child(6),
 .factor-table td:nth-child(6) {
-  width: 112px;
+  width: 104px;
+}
+
+.factor-table th:nth-child(7),
+.factor-table td:nth-child(7) {
+  width: 104px;
+}
+
+.factor-table th:nth-child(8),
+.factor-table td:nth-child(8),
+.factor-table th:nth-child(9),
+.factor-table td:nth-child(9),
+.factor-table th:nth-child(10),
+.factor-table td:nth-child(10),
+.factor-table th:nth-child(11),
+.factor-table td:nth-child(11) {
+  width: 116px;
+}
+
+.factor-table th:nth-child(12),
+.factor-table td:nth-child(12) {
+  width: 150px;
+}
+
+.factor-table th:nth-child(13),
+.factor-table td:nth-child(13) {
+  width: 128px;
 }
 
 input[type="checkbox"] {
@@ -1047,7 +1081,7 @@ input[type="checkbox"] {
 .factor-link {
   border: 0;
   padding: 0;
-  width: 13ch;
+  max-width: 100%;
   background: transparent;
   color: var(--primary);
   font-size: 18px;
@@ -1055,6 +1089,8 @@ input[type="checkbox"] {
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .factor-link:hover {
