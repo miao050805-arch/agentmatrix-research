@@ -387,6 +387,7 @@ function proofBadge(status) {
     passed: ["已通过", "badge-green"],
     failed: ["失败", "badge-red"],
     partial: ["部分", "badge-orange"],
+    truth_ready: ["已接入", "badge-blue"],
     pending: ["等待", "badge-gray"],
     missing: ["缺失", "badge-gray"],
   };
@@ -787,7 +788,7 @@ function normalizeSupabaseTruthSummaryRow(row) {
     library,
     raw_library: `${family} truth`,
     category: "真值库",
-    subcategory: `${formatInteger(rowCount)} rows / ${formatInteger(symbolCount)} symbols`,
+    subcategory: "",
     market: "ashare",
     universe: "A股",
     source: "supabase_truth_summary",
@@ -796,7 +797,7 @@ function normalizeSupabaseTruthSummaryRow(row) {
     description: `标准真值已接入：${formatInteger(rowCount)} 条，${formatInteger(symbolCount)} 只标的，${startDate || "-"} 至 ${endDate || "-"}`,
     formula: "",
     implementation_status: "truth_ready",
-    proof_status: "partial",
+    proof_status: "truth_ready",
     truth_status: "not_compared",
     overall_status: "truth_ready",
     coverage_ratio: null,
@@ -1178,6 +1179,7 @@ function marketLabel(factorOrKey) {
 }
 
 function marketDetail(factor) {
+  if (factor.metadata?.truth_summary_source) return "";
   return factor.universe || factor.metadata?.universe || factor.data_source || factor.source || "-";
 }
 
@@ -1466,6 +1468,9 @@ function renderTable() {
     const displayName = compactName(factor.factor_name);
     const coverageTone = coverageClass(factor.coverage_ratio);
     const coverageHelp = coverageTitle(factor.coverage_ratio);
+    const marketDetailText = marketDetail(factor);
+    const categoryText = factor.metadata?.truth_summary_source ? "真值库" : jqFactorCategory(factor);
+    const categoryDetailText = factor.metadata?.truth_summary_source ? "" : factor.subcategory || "";
     const row = document.createElement("tr");
     row.className = [
       state.selectedIds.has(factor.id) ? "selected" : "",
@@ -1485,8 +1490,8 @@ function renderTable() {
         </button>
       </td>
       <td>${escapeHtml(factor.library)}</td>
-      <td>${marketChipHtml(factor)}<span class="factor-subcategory">${escapeHtml(marketDetail(factor))}</span></td>
-      <td>${escapeHtml(jqFactorCategory(factor))}<span class="factor-subcategory">${escapeHtml(factor.subcategory || "")}</span></td>
+      <td>${marketChipHtml(factor)}${marketDetailText ? `<span class="factor-subcategory">${escapeHtml(marketDetailText)}</span>` : ""}</td>
+      <td>${escapeHtml(categoryText)}${categoryDetailText ? `<span class="factor-subcategory">${escapeHtml(categoryDetailText)}</span>` : ""}</td>
       <td><span class="badge ${proofClass}">${proofText}</span></td>
       <td>${truthBadgeHtml(factor)}</td>
       <td class="number ${coverageTone}" title="${escapeHtml(coverageHelp)}">${formatRatio(factor.coverage_ratio)}</td>
