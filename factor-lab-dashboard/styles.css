@@ -2102,8 +2102,10 @@ code {
 }
 
 .research-svg {
+  display: block;
   width: 100%;
   height: 100%;
+  overflow: visible;
 }
 
 .metrics-group {
@@ -2172,8 +2174,9 @@ code {
 
 .research-layout {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(680px, 2fr) minmax(420px, 1fr);
   gap: 24px;
+  align-items: stretch;
 }
 
 .research-card {
@@ -2183,6 +2186,7 @@ code {
 .research-card header span {
   color: #718096;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .side-charts {
@@ -2208,21 +2212,38 @@ code {
 .chart-rendered {
   box-sizing: border-box;
   display: block;
-  padding: 14px 18px 10px;
+  padding: 18px 22px 14px;
   background: #ffffff;
 }
 
 .chart-rendered.chart-large {
-  height: 430px;
-  padding: 8px 10px 6px;
+  height: 480px;
+  padding: 18px 22px 16px;
 }
 
 .chart-rendered:not(.chart-large) {
-  height: 250px;
+  height: 295px;
+  padding: 16px 18px 14px;
 }
 
 .chart-large {
-  min-height: 430px;
+  min-height: 480px;
+}
+
+@media (max-width: 1280px) {
+  .research-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .side-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .side-charts {
+    grid-template-columns: 1fr;
+  }
 }
 
 .placeholder-mark {
