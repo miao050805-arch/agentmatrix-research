@@ -788,6 +788,8 @@ function normalizeSupabaseTruthSummaryRow(row) {
     raw_library: `${family} truth`,
     category: "真值库",
     subcategory: `${formatInteger(rowCount)} rows / ${formatInteger(symbolCount)} symbols`,
+    market: "ashare",
+    universe: "A股",
     source: "supabase_truth_summary",
     source_id: `${family}:${factorName}:${sourceVersion}`,
     display_name: factorName,
@@ -805,7 +807,7 @@ function normalizeSupabaseTruthSummaryRow(row) {
     truth_max_abs_error: null,
     latest_job_id: null,
     latest_checked_at: latestImportedAt,
-    data_source: "Supabase factor_truth_values_summary",
+    data_source: "Supabase",
     metadata: {
       truth_summary_source: true,
       factor_family: family,
@@ -819,6 +821,8 @@ function normalizeSupabaseTruthSummaryRow(row) {
       avg_truth_value: row.avg_truth_value,
       latest_imported_at: latestImportedAt,
       supabase_table: SUPABASE_TRUTH_SUMMARY_TABLE,
+      market: "ashare",
+      universe: "A股",
     },
   };
 }
