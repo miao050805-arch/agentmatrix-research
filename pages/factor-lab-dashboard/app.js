@@ -828,6 +828,31 @@ function normalizeSupabaseTruthSummaryRow(row) {
   };
 }
 
+function canonicalFactorKey(factor) {
+  const rawLibrary = String(factor.library || factor.raw_library || factor.factor_family || "")
+    .trim()
+    .toLowerCase();
+  const family = rawLibrary.includes("alpha101") || rawLibrary.includes("wq101") || rawLibrary.includes("worldquant")
+    ? "wq101"
+    : rawLibrary || "unknown";
+  const rawName = String(factor.raw_factor_name || factor.factor_name || factor.id || "")
+    .trim()
+    .toLowerCase();
+  const alphaMatch = rawName.match(/(?:worldquant[_-]?)?alpha0*(\d+)/);
+  const name = alphaMatch ? `alpha${Number(alphaMatch[1])}` : rawName;
+  return `${family}:${name}`;
+}
+
+function dedupeSupabaseFactors(factors) {
+  const seen = new Set();
+  return factors.filter((factor) => {
+    const key = canonicalFactorKey(factor);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function formatInteger(value) {
   const number = toFiniteNumber(value);
   return number === null ? "-" : Math.round(number).toLocaleString("zh-CN");
@@ -904,7 +929,7 @@ async function fetchSupabaseDashboardPayload() {
       supabase_loaded_tables: tables,
     },
     errors: errors.map((error) => error.message),
-    factors,
+    factors: dedupeSupabaseFactors(factors),
   };
 }
 
