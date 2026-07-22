@@ -5538,7 +5538,7 @@ function renderAnalysisPanel(factor) {
             <span>区间：当前复现样本区间</span>
           </header>
           <div class="chart-placeholder ${hasRealData ? "chart-rendered" : ""}">
-            ${hasRealData ? renderIcTimeSeriesChart(detailData) : `<strong>等待时序数据</strong>`}
+            ${hasRealData ? renderIcTimeSeriesChartV2(detailData) : `<strong>等待时序数据</strong>`}
           </div>
         </article>
         <article class="research-card">
@@ -5547,7 +5547,7 @@ function renderAnalysisPanel(factor) {
             <span>区间：当前复现样本区间</span>
           </header>
           <div class="chart-placeholder ${hasRealData ? "chart-rendered" : ""}">
-            ${hasRealData ? renderGroupPerformanceChart(detailData) : `<strong>等待分组收益数据</strong>`}
+            ${hasRealData ? renderGroupPerformanceChartV2(detailData) : `<strong>等待分组收益数据</strong>`}
           </div>
         </article>
       </div>
@@ -5578,6 +5578,40 @@ function uniqueMonthTicks(dates, maxTicks) {
     }
   }
   return selected.sort((a, b) => a.index - b.index);
+}
+
+function evenIndexTicks(labels, maxTicks) {
+  const count = labels.length;
+  if (!count) return [];
+  const tickCount = Math.min(maxTicks, count);
+  const ticks = [];
+  const seen = new Set();
+  for (let i = 0; i < tickCount; i++) {
+    const index = Math.round((i / Math.max(tickCount - 1, 1)) * (count - 1));
+    const label = String(labels[index] || "").substring(0, 7);
+    const key = `${index}:${label}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      ticks.push({ index, label });
+    }
+  }
+  return ticks;
+}
+
+function limitAxisTicks(ticks, maxTicks) {
+  if (ticks.length <= maxTicks) return ticks;
+  const selected = [];
+  const seen = new Set();
+  const last = ticks.length - 1;
+  for (let i = 0; i < maxTicks; i++) {
+    const value = ticks[Math.round((i / Math.max(maxTicks - 1, 1)) * last)];
+    const key = String(value);
+    if (!seen.has(key)) {
+      seen.add(key);
+      selected.push(value);
+    }
+  }
+  return selected;
 }
 
 function niceAxisRange(values, paddingRatio = 0.18) {
@@ -5624,45 +5658,45 @@ function renderStratificationChart(detailData) {
     return `<text x="200" y="80" fill="#9ca3af" font-size="12" text-anchor="middle">暂无分层数据</text>`;
   }
   
-  const validEquity = equity.filter(v => !isNaN(v) && v > 0);
-  const rawMin = Math.min(...validEquity);
-  const rawMax = Math.max(...validEquity);
-  const minVal = Math.max(0, Math.floor((rawMin - 0.05) * 10) / 10);
-  const maxVal = Math.ceil((rawMax + 0.05) * 10) / 10;
+  const validEquity = equity.map(Number).filter(Number.isFinite);
+  const axis = niceAxisRange(validEquity, 0.08);
+  const minVal = axis.min;
+  const maxVal = axis.max;
   const range = maxVal - minVal || 0.4;
   const totalLength = equity.length;
+  const plot = { left: 68, top: 24, right: 884, bottom: 250 };
+  const width = plot.right - plot.left;
+  const height = plot.bottom - plot.top;
   
-  let html = `<svg viewBox="0 0 760 260" class="research-svg">`;
+  let html = `<svg viewBox="0 0 920 310" class="research-svg">`;
   
-  html += `<line x1="50" y1="20" x2="50" y2="220" stroke="#e2e8f0" stroke-width="1" />`;
-  html += `<line x1="50" y1="220" x2="740" y2="220" stroke="#e2e8f0" stroke-width="1" />`;
+  html += `<line x1="${plot.left}" y1="${plot.top}" x2="${plot.left}" y2="${plot.bottom}" stroke="#dbe4f0" stroke-width="1" />`;
+  html += `<line x1="${plot.left}" y1="${plot.bottom}" x2="${plot.right}" y2="${plot.bottom}" stroke="#dbe4f0" stroke-width="1" />`;
   
-  const yTicks = [];
-  for (let value = minVal; value <= maxVal + 0.001; value += 0.1) {
-    yTicks.push(Number(value.toFixed(1)));
-  }
-  yTicks.forEach((val) => {
-    const y = 220 - ((val - minVal) / range) * 200;
-    html += `<line x1="50" y1="${y}" x2="740" y2="${y}" stroke="#f1f5f9" stroke-width="1" />`;
-    html += `<text x="42" y="${y + 4}" fill="#64748b" font-size="9" text-anchor="end">${val.toFixed(1)}</text>`;
+  limitAxisTicks(axis.ticks, 6).forEach((val) => {
+    const y = plot.bottom - ((val - minVal) / range) * height;
+    html += `<line x1="${plot.left}" y1="${y}" x2="${plot.right}" y2="${y}" stroke="#eef3f8" stroke-width="1" />`;
+    html += `<text x="${plot.left - 12}" y="${y + 4}" fill="#5f7189" font-size="12" text-anchor="end">${formatCompactAxisTick(val, range)}</text>`;
   });
   
-  const xTicks = uniqueMonthTicks(dates, 10);
+  const xTicks = evenIndexTicks(dates, 8);
   xTicks.forEach((tick) => {
-    const x = 50 + (tick.index / Math.max(totalLength - 1, 1)) * 690;
-    html += `<line x1="${x}" y1="220" x2="${x}" y2="226" stroke="#e2e8f0" stroke-width="1" />`;
-    html += `<text x="${x}" y="244" fill="#64748b" font-size="9" text-anchor="middle">${tick.label}</text>`;
+    const x = plot.left + (tick.index / Math.max(totalLength - 1, 1)) * width;
+    html += `<line x1="${x}" y1="${plot.bottom}" x2="${x}" y2="${plot.bottom + 8}" stroke="#dbe4f0" stroke-width="1" />`;
+    html += `<text x="${x}" y="${plot.bottom + 28}" fill="#5f7189" font-size="12" text-anchor="middle">${tick.label}</text>`;
   });
   
   const points = [];
   for (let i = 0; i < equity.length; i++) {
-    const x = 50 + (i / Math.max(totalLength - 1, 1)) * 690;
-    const y = 220 - ((equity[i] - minVal) / range) * 200;
-    points.push(`${x},${Math.max(20, Math.min(220, y))}`);
+    const value = Number(equity[i]);
+    if (!Number.isFinite(value)) continue;
+    const x = plot.left + (i / Math.max(totalLength - 1, 1)) * width;
+    const y = plot.bottom - ((value - minVal) / range) * height;
+    points.push(`${x.toFixed(2)},${Math.max(plot.top, Math.min(plot.bottom, y)).toFixed(2)}`);
   }
   
   if (points.length > 0) {
-    html += `<path d="M ${points.join(" L ")}" fill="none" stroke="#1e40af" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />`;
+    html += `<path d="M ${points.join(" L ")}" fill="none" stroke="#2454c5" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" />`;
   }
   
   html += `</svg>`;
@@ -5809,6 +5843,137 @@ function renderGroupPerformanceChart(detailData) {
   
   html += `</svg>`;
   
+  return html;
+}
+
+function renderIcTimeSeriesChartV2(detailData) {
+  const icSeries = detailData.ic_time_series || [];
+  if (!icSeries.length) {
+    return `<svg viewBox="0 0 452 220" class="research-svg"><text x="226" y="112" fill="#9ca3af" font-size="12" text-anchor="middle">暂无 IC 时序数据</text></svg>`;
+  }
+
+  const icValues = icSeries.map((item) => Number(item.ic)).filter(Number.isFinite);
+  const dates = icSeries.map((item) => item.date);
+  const axis = niceAxisRange(icValues, 0.12);
+  const minVal = axis.min;
+  const maxVal = axis.max;
+  const range = maxVal - minVal || 1;
+  const totalLength = icSeries.length;
+  const plot = { left: 58, top: 28, right: 424, bottom: 158 };
+  const width = plot.right - plot.left;
+  const height = plot.bottom - plot.top;
+  const zeroY = Math.max(plot.top, Math.min(plot.bottom, plot.bottom - ((0 - minVal) / range) * height));
+  const displayStep = Math.max(1, Math.ceil(totalLength / 56));
+  const visibleBars = Math.ceil(totalLength / displayStep);
+  const barWidth = Math.max(3.5, Math.min(8, width / Math.max(visibleBars, 1) - 2));
+
+  let html = `<svg viewBox="0 0 452 220" class="research-svg">`;
+  html += `<line x1="${plot.left}" y1="${plot.top}" x2="${plot.left}" y2="${plot.bottom}" stroke="#dbe4f0" stroke-width="1" />`;
+  html += `<line x1="${plot.left}" y1="${plot.bottom}" x2="${plot.right}" y2="${plot.bottom}" stroke="#dbe4f0" stroke-width="1" />`;
+  html += `<text x="${plot.left}" y="16" fill="#5f7189" font-size="12" font-weight="700">IC 值</text>`;
+
+  limitAxisTicks(axis.ticks, 6).forEach((val) => {
+    const y = plot.bottom - ((val - minVal) / range) * height;
+    html += `<line x1="${plot.left}" y1="${y}" x2="${plot.right}" y2="${y}" stroke="#eef3f8" stroke-width="1" />`;
+    html += `<text x="${plot.left - 10}" y="${y + 4}" fill="#5f7189" font-size="11" text-anchor="end">${formatCompactAxisTick(val, range)}</text>`;
+  });
+
+  html += `<line x1="${plot.left}" y1="${zeroY}" x2="${plot.right}" y2="${zeroY}" stroke="#9aa8ba" stroke-width="1" stroke-dasharray="4,4" />`;
+
+  for (let i = 0; i < icSeries.length; i += displayStep) {
+    const ic = Number(icSeries[i]?.ic);
+    if (!Number.isFinite(ic)) continue;
+    const x = plot.left + (i / Math.max(totalLength - 1, 1)) * width;
+    const y = plot.bottom - ((ic - minVal) / range) * height;
+    const clampedY = Math.max(plot.top, Math.min(plot.bottom, y));
+    const barHeight = Math.max(1.5, Math.abs(clampedY - zeroY));
+    const isPositive = ic >= 0;
+    html += `<rect x="${(x - barWidth / 2).toFixed(2)}" y="${(isPositive ? clampedY : zeroY).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="1.4" fill="${isPositive ? "#23a66f" : "#e05252"}" opacity="0.66" />`;
+  }
+
+  evenIndexTicks(dates, 5).forEach((tick) => {
+    const x = plot.left + (tick.index / Math.max(totalLength - 1, 1)) * width;
+    html += `<line x1="${x}" y1="${plot.bottom}" x2="${x}" y2="${plot.bottom + 8}" stroke="#dbe4f0" stroke-width="1" />`;
+    html += `<text x="${x}" y="${plot.bottom + 29}" fill="#5f7189" font-size="12" text-anchor="middle">${tick.label}</text>`;
+  });
+
+  html += `</svg>`;
+  return html;
+}
+
+function renderGroupPerformanceChartV2(detailData) {
+  const groupReturns = detailData.group_returns || {};
+  const groups = Object.keys(groupReturns)
+    .filter((key) => key !== "long_short")
+    .sort((a, b) => Number(a) - Number(b));
+
+  if (!groups.length) {
+    return `<svg viewBox="0 0 452 220" class="research-svg"><text x="226" y="112" fill="#9ca3af" font-size="12" text-anchor="middle">暂无分组收益数据</text></svg>`;
+  }
+
+  const groupAverages = groups
+    .map((group) => {
+      const values = (groupReturns[group] || []).map((item) => Number(item.return)).filter(Number.isFinite);
+      if (!values.length) return null;
+      return {
+        group,
+        value: values.reduce((sum, value) => sum + value, 0) / values.length,
+      };
+    })
+    .filter(Boolean);
+
+  let lsAverage = null;
+  if (groupReturns.long_short) {
+    const values = groupReturns.long_short.map((item) => Number(item.return)).filter(Number.isFinite);
+    if (values.length) {
+      lsAverage = values.reduce((sum, value) => sum + value, 0) / values.length;
+    }
+  }
+
+  const barItems = [
+    ...groupAverages.map((item) => ({
+      ...item,
+      label: Number.isFinite(Number(item.group)) ? `G${Number(item.group).toFixed(0)}` : `G${item.group}`,
+    })),
+    ...(Number.isFinite(lsAverage) ? [{ group: "long_short", label: "LS", value: lsAverage, longShort: true }] : []),
+  ];
+  const axis = niceAxisRange(barItems.map((item) => item.value), 0.18);
+  const minVal = axis.min;
+  const maxVal = axis.max;
+  const range = maxVal - minVal || 0.02;
+  const plot = { left: 58, top: 28, right: 424, bottom: 158 };
+  const width = plot.right - plot.left;
+  const height = plot.bottom - plot.top;
+  const zeroY = Math.max(plot.top, Math.min(plot.bottom, plot.bottom - ((0 - minVal) / range) * height));
+  const slotWidth = width / Math.max(barItems.length, 1);
+  const barWidth = Math.max(10, Math.min(22, slotWidth * 0.52));
+  const palette = ["#d8e9ff", "#bad7ff", "#93c0ff", "#67a1f2", "#3f7ddd", "#245fc5", "#1f4ca3", "#1b3d86", "#18356e", "#112a58"];
+
+  let html = `<svg viewBox="0 0 452 220" class="research-svg">`;
+  html += `<line x1="${plot.left}" y1="${plot.top}" x2="${plot.left}" y2="${plot.bottom}" stroke="#dbe4f0" stroke-width="1" />`;
+  html += `<line x1="${plot.left}" y1="${plot.bottom}" x2="${plot.right}" y2="${plot.bottom}" stroke="#dbe4f0" stroke-width="1" />`;
+  html += `<text x="${plot.left}" y="16" fill="#5f7189" font-size="12" font-weight="700">日均收益</text>`;
+
+  limitAxisTicks(axis.ticks, 6).forEach((val) => {
+    const y = plot.bottom - ((val - minVal) / range) * height;
+    html += `<line x1="${plot.left}" y1="${y}" x2="${plot.right}" y2="${y}" stroke="#eef3f8" stroke-width="1" />`;
+    html += `<text x="${plot.left - 10}" y="${y + 4}" fill="#5f7189" font-size="11" text-anchor="end">${formatCompactAxisTick(val, range)}</text>`;
+  });
+
+  html += `<line x1="${plot.left}" y1="${zeroY}" x2="${plot.right}" y2="${zeroY}" stroke="#9aa8ba" stroke-width="1" stroke-dasharray="4,4" />`;
+
+  barItems.forEach((item, index) => {
+    const x = plot.left + slotWidth * index + slotWidth / 2;
+    const y = plot.bottom - ((item.value - minVal) / range) * height;
+    const clampedY = Math.max(plot.top, Math.min(plot.bottom, y));
+    const barHeight = Math.max(1.5, Math.abs(clampedY - zeroY));
+    const isPositive = item.value >= 0;
+    const color = item.longShort ? "#f97316" : palette[index % palette.length];
+    html += `<rect x="${(x - barWidth / 2).toFixed(2)}" y="${(isPositive ? clampedY : zeroY).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="2" fill="${color}" />`;
+    html += `<text x="${x.toFixed(2)}" y="${plot.bottom + 27}" fill="#5f7189" font-size="11" text-anchor="middle">${item.label}</text>`;
+  });
+
+  html += `</svg>`;
   return html;
 }
 
