@@ -43,6 +43,11 @@ const SUPABASE_FACTOR_TABLE =
   urlParams.get("supabaseTable") ||
   window.localStorage.getItem("FACTOR_LAB_SUPABASE_FACTOR_TABLE") ||
   "public_dashboard_factors";
+const SUPABASE_TRUTH_SUMMARY_TABLE =
+  window.FACTOR_LAB_SUPABASE_TRUTH_SUMMARY_TABLE ||
+  urlParams.get("truthSummaryTable") ||
+  window.localStorage.getItem("FACTOR_LAB_SUPABASE_TRUTH_SUMMARY_TABLE") ||
+  "factor_truth_values_summary";
 const USE_SUPABASE_DASHBOARD = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && !configuredApiHost);
 const ACCESS_PASSWORD =
   window.FACTOR_LAB_ACCESS_PASSWORD ||
@@ -58,6 +63,9 @@ if (urlParams.get("supabaseAnonKey")) {
 }
 if (urlParams.get("supabaseTable")) {
   window.localStorage.setItem("FACTOR_LAB_SUPABASE_FACTOR_TABLE", SUPABASE_FACTOR_TABLE);
+}
+if (urlParams.get("truthSummaryTable")) {
+  window.localStorage.setItem("FACTOR_LAB_SUPABASE_TRUTH_SUMMARY_TABLE", SUPABASE_TRUTH_SUMMARY_TABLE);
 }
 if (urlParams.get("accessPassword")) {
   window.localStorage.setItem("FACTOR_LAB_ACCESS_PASSWORD", ACCESS_PASSWORD);
@@ -757,11 +765,70 @@ function normalizeSupabaseFactorRow(row) {
   };
 }
 
-async function fetchSupabaseDashboardPayload() {
-  const endpoint = new URL(`${SUPABASE_URL}/rest/v1/${encodeURIComponent(SUPABASE_FACTOR_TABLE)}`);
+function normalizeSupabaseTruthSummaryRow(row) {
+  const family = String(row.factor_family || "unknown").trim();
+  const factorName = String(row.factor_name || "unknown_factor").trim();
+  const sourceVersion = String(row.source_version || "v1").trim();
+  const rowCount = toFiniteNumber(row.row_count);
+  const symbolCount = toFiniteNumber(row.symbol_count);
+  const startDate = row.start_date || null;
+  const endDate = row.end_date || null;
+  const latestImportedAt = row.latest_imported_at || null;
+  const familyKey = family.toLowerCase();
+  const library = familyKey === "alpha101" ? "WQ101" : family.toUpperCase();
+  return {
+    id: `truth:${familyKey}:${factorName}:${sourceVersion}`,
+    factor_name: factorName,
+    raw_factor_name: factorName,
+    library,
+    raw_library: `${family} truth`,
+    category: "真值库",
+    subcategory: `${formatInteger(rowCount)} rows / ${formatInteger(symbolCount)} symbols`,
+    source: "supabase_truth_summary",
+    source_id: `${family}:${factorName}:${sourceVersion}`,
+    display_name: factorName,
+    description: `标准真值已接入：${formatInteger(rowCount)} 条，${formatInteger(symbolCount)} 只标的，${startDate || "-"} 至 ${endDate || "-"}`,
+    formula: "",
+    implementation_status: "truth_ready",
+    proof_status: "partial",
+    truth_status: "not_compared",
+    overall_status: "truth_ready",
+    coverage_ratio: null,
+    rank_ic_mean: null,
+    rank_ic_ir: null,
+    long_short_mean: null,
+    truth_exact_match_ratio: null,
+    truth_max_abs_error: null,
+    latest_job_id: null,
+    latest_checked_at: latestImportedAt,
+    data_source: "Supabase factor_truth_values_summary",
+    metadata: {
+      truth_summary_source: true,
+      factor_family: family,
+      source_version: sourceVersion,
+      row_count: rowCount,
+      symbol_count: symbolCount,
+      start_date: startDate,
+      end_date: endDate,
+      min_truth_value: row.min_truth_value,
+      max_truth_value: row.max_truth_value,
+      avg_truth_value: row.avg_truth_value,
+      latest_imported_at: latestImportedAt,
+      supabase_table: SUPABASE_TRUTH_SUMMARY_TABLE,
+    },
+  };
+}
+
+function formatInteger(value) {
+  const number = toFiniteNumber(value);
+  return number === null ? "-" : Math.round(number).toLocaleString("zh-CN");
+}
+
+async function fetchSupabaseRows(tableName, { order = "", limit = 1000 } = {}) {
+  const endpoint = new URL(`${SUPABASE_URL}/rest/v1/${encodeURIComponent(tableName)}`);
   endpoint.searchParams.set("select", "*");
-  endpoint.searchParams.set("order", "latest_checked_at.desc.nullslast");
-  endpoint.searchParams.set("limit", "1000");
+  if (order) endpoint.searchParams.set("order", order);
+  endpoint.searchParams.set("limit", String(limit));
   const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       apikey: SUPABASE_ANON_KEY,
@@ -769,9 +836,50 @@ async function fetchSupabaseDashboardPayload() {
       Accept: "application/json",
     },
   });
-  if (!response.ok) throw new Error(`Supabase HTTP ${response.status}`);
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = await response.text();
+    } catch (error) {
+      detail = "";
+    }
+    throw new Error(`Supabase ${tableName} HTTP ${response.status}${detail ? `: ${detail.slice(0, 160)}` : ""}`);
+  }
   const rows = await response.json();
-  const factors = Array.isArray(rows) ? rows.map(normalizeSupabaseFactorRow) : [];
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function fetchSupabaseDashboardPayload() {
+  const factors = [];
+  const errors = [];
+  const tables = [];
+  if (SUPABASE_FACTOR_TABLE && SUPABASE_FACTOR_TABLE !== SUPABASE_TRUTH_SUMMARY_TABLE) {
+    try {
+      const rows = await fetchSupabaseRows(SUPABASE_FACTOR_TABLE, {
+        order: "latest_checked_at.desc.nullslast",
+        limit: 1000,
+      });
+      factors.push(...rows.map(normalizeSupabaseFactorRow));
+      tables.push(SUPABASE_FACTOR_TABLE);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (SUPABASE_TRUTH_SUMMARY_TABLE) {
+    try {
+      const rows = await fetchSupabaseRows(SUPABASE_TRUTH_SUMMARY_TABLE, {
+        order: "latest_imported_at.desc.nullslast",
+        limit: 1000,
+      });
+      factors.push(...rows.map(normalizeSupabaseTruthSummaryRow));
+      tables.push(SUPABASE_TRUTH_SUMMARY_TABLE);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (!factors.length && errors.length) {
+    throw new Error(errors.map((error) => error.message).join(" | "));
+  }
   return {
     schema_version: "factor_lab_view_v1",
     generated_at: new Date().toISOString(),
@@ -783,8 +891,10 @@ async function fetchSupabaseDashboardPayload() {
       factor_source_warning_count: 0,
       artifact_warning_count: 0,
       supabase_table: SUPABASE_FACTOR_TABLE,
+      supabase_truth_summary_table: SUPABASE_TRUTH_SUMMARY_TABLE,
+      supabase_loaded_tables: tables,
     },
-    errors: [],
+    errors: errors.map((error) => error.message),
     factors,
   };
 }
@@ -1609,6 +1719,9 @@ function monitorValidationHtml(factor) {
   const coverage = toFiniteNumber(factor.coverage_ratio);
   const ir = Math.abs(toFiniteNumber(factor.rank_ic_ir) ?? 0);
   const score = Math.round(Math.min(99, Math.max(30, ir * 100)));
+  if (factor.metadata?.truth_summary_source) {
+    return `<span class="validation-badge review">TRUTH</span>`;
+  }
   if (factor.proof_status === "failed" || isTruthIssue(factor.truth_status)) {
     return `<span class="validation-badge reject">REJECT ${score}</span>`;
   }
@@ -1632,6 +1745,14 @@ function monitorMarketHtml(factor) {
 }
 
 function factorSourceDisplay(factor) {
+  if (factor.metadata?.truth_summary_source) {
+    const rowCount = formatInteger(factor.metadata.row_count);
+    const symbolCount = formatInteger(factor.metadata.symbol_count);
+    return {
+      primary: `${factor.library || "Truth"} 真值库`,
+      secondary: `${rowCount} 行 / ${symbolCount} 标的`,
+    };
+  }
   const officialSource = factor.metadata?.official_source || factor.source_document || factor.data_source || factor.library || "-";
   if (String(officialSource).includes("Quant API factor_monthly")) {
     return {
