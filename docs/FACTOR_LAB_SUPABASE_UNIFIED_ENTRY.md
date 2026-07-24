@@ -125,8 +125,8 @@ $env:FACTOR_LAB_SUPABASE_WRITE_KEY="service_role 或 authenticated JWT"
 
 ```powershell
 python scripts/submit_supabase_unified_factor.py `
-  --values-csv C:\path\alpha013_values.csv `
-  --metrics-json C:\path\alpha013_metrics.json `
+  --values-csv <path>\alpha013_values.csv `
+  --metrics-json <path>\alpha013_metrics.json `
   --entry-type truth_compare `
   --factor-family alpha101 `
   --factor-name WorldQuant_alpha013 `
