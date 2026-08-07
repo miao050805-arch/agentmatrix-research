@@ -3298,6 +3298,157 @@ code {
   color: #fff;
 }
 
+.intake-conn-banner {
+  display: grid;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+}
+
+.intake-conn-banner strong {
+  font-weight: 900;
+}
+
+.intake-conn-banner span {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.intake-conn-banner.ok {
+  border-color: #bbf7d0;
+  border-left: 4px solid #16a34a;
+  background: #f0fdf4;
+}
+
+.intake-conn-banner.ok strong {
+  color: #15803d;
+}
+
+.intake-conn-banner.warn {
+  border-color: #fde68a;
+  border-left: 4px solid #d97706;
+  background: #fffbeb;
+}
+
+.intake-conn-banner.warn strong {
+  color: #b45309;
+}
+
+.intake-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.intake-entry-card {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.intake-entry-card:hover {
+  border-color: var(--primary);
+}
+
+.intake-entry-card.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.intake-entry-card strong {
+  color: var(--ink, #0f172a);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.intake-entry-card span {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.intake-entry-card code {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  word-break: break-all;
+}
+
+.truth-execution-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #f8fafc;
+}
+
+.truth-execution-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.truth-execution-panel header strong {
+  font-weight: 900;
+}
+
+.truth-execution-panel header span {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.truth-execution-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.truth-execution-metrics .truth-metric {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.truth-execution-metrics .truth-metric span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.truth-execution-metrics .truth-metric strong {
+  color: var(--ink, #0f172a);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.truth-execution-panel footer {
+  display: grid;
+  gap: 2px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-task-table td .badge {
+  margin: 1px 2px;
+}
+
 .intake-skill-card {
   display: flex;
   align-items: center;
@@ -3568,6 +3719,11 @@ code {
 .agent-task-table th:nth-child(6),
 .agent-task-table td:nth-child(6) {
   width: 150px;
+}
+
+.agent-task-table td:nth-child(4) {
+  white-space: normal;
+  min-width: 150px;
 }
 
 .agent-task-id {
@@ -5767,6 +5923,7 @@ tbody tr.selected {
 }
 
 /* Requested visibility corrections: keep public polish, restore core controls. */
+.nav-item[data-view="agent_task"],
 .nav-item[data-view="tasks"],
 .nav-item[data-view="settings"] {
   display: flex;

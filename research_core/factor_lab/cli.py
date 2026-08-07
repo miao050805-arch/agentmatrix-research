@@ -217,12 +217,16 @@ def main() -> None:
 
     if args.command == "export-alpha101-truth-template":
         factor_names = [item.strip() for item in args.factors.split(",") if item.strip()]
-        from research_core.factor_lab.truth import build_truth_template
-        df = build_truth_template(factor_names=factor_names, n_dates=args.n_dates, n_codes=args.n_codes, seed=args.seed)
-        template_name = args.template_name or f"alpha101_truth_{args.n_dates}d_{args.n_codes}c"
-        out = config.workspace_dir / f"{template_name}.csv"
-        df.to_csv(out, index=False)
-        print(json.dumps({"ok": True, "path": str(out), "shape": list(df.shape)}))
+        request_payload = {
+            "factor_names": factor_names,
+            "n_dates": args.n_dates,
+            "n_codes": args.n_codes,
+            "seed": args.seed,
+        }
+        if args.template_name:
+            request_payload["template_name"] = args.template_name
+        payload = export_alpha101_truth_template(request_payload, config=config)
+        print(json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2))
         return
 
     if args.command == "validate-alpha101-truth":

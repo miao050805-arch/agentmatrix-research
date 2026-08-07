@@ -1,3 +1,7 @@
+# Factor Lab API on Render.
+# Port contract: Render injects $PORT at runtime (see startCommand); the Flask
+# app reads PORT with 8012 as the local-development default, so the same code
+# runs locally (reserved local port 8012) and in the cloud without changes.
 services:
   - type: web
     name: factor-lab-api
@@ -9,4 +13,11 @@ services:
       - key: FACTOR_LAB_PUBLIC_ORIGIN
         value: https://miao050805-arch.github.io
       - key: FACTOR_LAB_QUANT_API_TOKEN
+        sync: false
+      # Supabase cloud database used by scripts/sync_truth_compare_to_supabase.py
+      # to publish truth-compare verdicts to the public dashboard tables.
+      # Set these in the Render dashboard; never commit real values.
+      - key: FACTOR_LAB_SUPABASE_URL
+        sync: false
+      - key: FACTOR_LAB_SUPABASE_WRITE_KEY
         sync: false

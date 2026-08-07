@@ -206,19 +206,19 @@ const JQ_CATEGORY_BY_FACTOR = {
   bb_position: "技术指标因子",
 };
 const AGENT_TASK_TEXT = {
-  title: "数据入口（待接入）",
+  title: "数据入口",
   subtitle:
-    "当前先作为 Supabase 只读接入口和 Agent Skill 契约预留。GitHub Pages 只负责读取云端表和展示结果，不在网页内执行复现或入库。",
-  boundaryTitle: "Supabase 接入预留",
+    "两个官方入口：真值对照（factor_values.csv 与库内标准真值逐点比对，作为主闸门）与研报自动复现（code.py / experiment_data.csv / paper.pdf / research_report.pdf）。网页只创建任务与展示结果，执行由后端 Agent 完成。",
+  boundaryTitle: "执行边界",
   boundary:
-    "后续由云端 Agent / 后端写入 Supabase 与对象存储；前端只读取 public dashboard 表。现有上传和运行控件保留为接入占位，不作为 GitHub Pages 执行入口。",
-  quarantineHint: "待接入：Supabase 表存任务、状态、指标和文件路径；大文件放 Storage。GitHub Pages 默认只读。",
-  submit: "接入后运行",
+    "浏览器不执行 Agent、不写正式因子库。任务经 POST /api/agents/factor-lab/intake/* 写入云端运行时目录；Agent 执行 scripts/run_truth_compare.py 回写 status.json 与 artifacts，再由 scripts/sync_truth_compare_to_supabase.py 同步到 Supabase 展示表。",
+  quarantineHint: "任务与对照证据入 quarantine 命名空间；G8 最终确认仅人工。大文件放 Storage，网页只读展示表。",
+  submit: "创建任务",
   submitting: "提交中...",
   emptyWarning: "请先拖入或选择文件",
   submittedToast: "任务已创建，已写入数据入口队列",
   recentTitle: "数据入口任务",
-  emptyRecent: "暂无任务。拖入文件夹或文件后点击运行。",
+  emptyRecent: "暂无任务。拖入文件夹或文件后点击创建任务。",
 };
 
 const state = {
@@ -3438,6 +3438,7 @@ function agentTaskRows() {
       sourceStatus: task.status || "submitted",
       stages,
       artifacts,
+      truthExecution: task.truth_execution && typeof task.truth_execution === "object" ? task.truth_execution : null,
     };
   });
 }
@@ -3505,6 +3506,7 @@ function renderTaskStagePanel(row) {
       <strong>关联产物</strong>
       <span>${escapeHtml(row.artifacts)}</span>
     </footer>
+    ${renderTruthExecutionPanel(row)}
   `;
 }
 
@@ -3586,18 +3588,45 @@ async function loadAgentTasks() {
   }
   if (state.agentTasksLoaded) return;
   if (CLOUD_DEMO_MODE) {
-    state.agentTasks = [
-      {
-        task_id: "demo-cloud-factor-review",
-        status: "completed",
-        instruction: "GitHub Pages 展示模式：复核 WQ101 与 GTJA191 样例因子的复现状态。",
-        requested_at: "2026-07-06T00:00:00Z",
-        message: "静态演示任务，真实执行需要连接云端后端。",
-        is_placeholder: true,
-        current_gate: "G2",
-        progress: 100,
-      },
-    ];
+    // GitHub Pages is read-only: the queue mirrors the Supabase public
+    // dashboard table written by scripts/sync_truth_compare_to_supabase.py.
+    let cloudRows = [];
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      try {
+        cloudRows = await fetchSupabaseRows("public_dashboard_tasks", {
+          order: "updated_at.desc",
+          limit: 50,
+        });
+      } catch (error) {
+        cloudRows = [];
+      }
+    }
+    state.agentTasks = cloudRows.map((row) => ({
+      task_id: row.task_id,
+      task_type: row.task_type,
+      status: row.status || "submitted",
+      instruction: row.title || row.task_id,
+      message: row.summary || "",
+      requested_at: row.created_at,
+      updated_at: row.updated_at,
+      current_gate: row.current_gate,
+      is_cloud_row: true,
+      truth_execution: row.payload && row.payload.truth_execution ? row.payload.truth_execution : null,
+    }));
+    if (!state.agentTasks.length) {
+      state.agentTasks = [
+        {
+          task_id: "demo-cloud-factor-review",
+          status: "completed",
+          instruction: "GitHub Pages 展示模式：复核 WQ101 与 GTJA191 样例因子的复现状态。",
+          requested_at: "2026-07-06T00:00:00Z",
+          message: "静态演示任务，真实执行需要连接云端后端。",
+          is_placeholder: true,
+          current_gate: "G2",
+          progress: 100,
+        },
+      ];
+    }
     state.agentTasksLoaded = true;
     renderAgentTask();
     if (state.view === "tasks") renderTasks();
@@ -3622,9 +3651,26 @@ async function submitTaskRequest(payload) {
   if (CLOUD_DEMO_MODE) {
     throw new Error("GitHub Pages demo mode is read-only. Deploy the Flask backend to enable Agent tasks.");
   }
-  // TODO(backend agent ready):
-  //   switch this isolated function to the real agent task endpoint if needed.
-  //   submitAgentTask should not need to change.
+  // Official intake routes (docs/FACTOR_LAB_TWO_ENTRY_BACKEND_FLOW.md):
+  //   POST /api/agents/factor-lab/intake/truth-compare
+  //   POST /api/agents/factor-lab/intake/research-reproduction
+  const entry =
+    payload.task_type === "truth_compare" || payload.task_type === "factor_values_compare"
+      ? "truth-compare"
+      : "research-reproduction";
+  const intakeResponse = await fetch(`${API_BASE}/intake/${entry}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (intakeResponse.ok) {
+    return await intakeResponse.json();
+  }
+  if (intakeResponse.status !== 404) {
+    const message = await intakeResponse.text();
+    throw new Error(message || `HTTP ${intakeResponse.status}`);
+  }
+  // Fallback for older backends that only expose the generic task endpoint.
   const response = await fetch(`${API_BASE}/agent-tasks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4926,6 +4972,87 @@ async function openAgentTaskFolder(taskId) {
   }
 }
 
+function truthExecutionBadge(task) {
+  const execution = task.truth_execution && typeof task.truth_execution === "object" ? task.truth_execution : null;
+  const status = String(execution?.status || task.standard_truth?.status || "");
+  if (status === "passed") return '<span class="badge badge-green">对照 passed</span>';
+  if (status === "failed") return '<span class="badge badge-orange">对照 failed</span>';
+  if (status === "not_comparable") return '<span class="badge badge-gray">不可对照</span>';
+  return "";
+}
+
+function intakeConnectionBanner() {
+  if (CLOUD_DEMO_MODE) {
+    const supabaseReady = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+    return `
+      <div class="intake-conn-banner warn">
+        <strong>GitHub Pages 只读演示模式</strong>
+        <span>创建任务需连接云端 Factor Lab API（Render 部署后在 config.js 设置 FACTOR_LAB_API_HOST 或以 ?api= 指定，本地调试预留端口 8012）；任务队列${supabaseReady ? "实时读取 Supabase public_dashboard_tasks 展示表。" : "在配置 Supabase 后读取云端展示表。"}</span>
+      </div>`;
+  }
+  return `
+    <div class="intake-conn-banner ok">
+      <strong>已连接 Factor Lab API</strong>
+      <span>${escapeHtml(API_HOST)} · 任务写入运行时目录后由 Agent 执行（scripts/run_truth_compare.py），对照证据经 Supabase 同步，G8 最终确认仅人工。</span>
+    </div>`;
+}
+
+function intakeEntryCard(taskType, { title, summary, files }) {
+  const active =
+    state.intakeTaskType === taskType ||
+    (taskType === "truth_compare" && state.intakeTaskType === "factor_values_compare") ||
+    (taskType === "research_reproduction" && state.intakeTaskType === "research_report_reproduction");
+  return `
+    <button type="button" class="intake-entry-card ${active ? "active" : ""}" data-intake-type="${taskType}">
+      <strong>${title}</strong>
+      <span>${summary}</span>
+      <code>${files}</code>
+    </button>`;
+}
+
+function renderTruthExecutionPanel(row) {
+  const execution = row.truthExecution;
+  if (!execution) return "";
+  const status = String(execution.status || "");
+  const statusBadge =
+    status === "passed"
+      ? '<span class="badge badge-green">passed</span>'
+      : status === "failed"
+        ? '<span class="badge badge-orange">failed</span>'
+        : status === "not_comparable"
+          ? '<span class="badge badge-gray">not_comparable</span>'
+          : `<span class="badge badge-gray">${escapeHtml(status || "-")}</span>`;
+  const decisionBadge = execution.decision
+    ? `<span class="badge ${execution.decision === "accept" ? "badge-green" : "badge-orange"}">${escapeHtml(execution.decision)}</span>`
+    : "";
+  const formatMetric = (value, digits = 4) =>
+    value === null || value === undefined || Number.isNaN(Number(value)) ? "-" : Number(value).toFixed(digits);
+  const formatError = (value) =>
+    value === null || value === undefined || Number.isNaN(Number(value)) ? "-" : Number(value).toExponential(2);
+  const metric = (label, value) => `
+    <div class="truth-metric">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>`;
+  return `
+    <section class="truth-execution-panel">
+      <header>
+        <strong>真值对照结果</strong>
+        <span>${statusBadge}${decisionBadge}</span>
+      </header>
+      <div class="truth-execution-metrics">
+        ${metric("overlap_ratio", formatMetric(execution.overlap_ratio))}
+        ${metric("exact_match_ratio", formatMetric(execution.exact_match_ratio))}
+        ${metric("max_abs_error", formatError(execution.max_abs_error))}
+        ${metric("compared_count", execution.compared_count ?? "-")}
+      </div>
+      <footer>
+        <span>阈值：overlap ≥ ${formatMetric(execution.min_overlap_ratio, 2)} · exact ≥ ${formatMetric(execution.pass_exact_match_ratio, 2)} · max_err ≤ ${formatError(execution.tolerance)}</span>
+        <span>run_id：<code>${escapeHtml(execution.run_id || "-")}</code> · ${escapeHtml(execution.artifact || "")}</span>
+      </footer>
+    </section>`;
+}
+
 function renderAgentTask() {
   if (!ENABLE_AGENT_TASK_DEBUG) return;
   if (!els.agentTaskView) return;
@@ -4962,7 +5089,9 @@ function renderAgentTask() {
           <td class="agent-task-summary" title="${escapeHtml(agentTaskSummary(task))}">${escapeHtml(agentTaskSummary(task))}</td>
           <td>
             <span class="badge badge-gray">${escapeHtml(task.status || "submitted")}</span>
-            ${task.is_placeholder ? '<span class="badge badge-gray">\u6f14\u793a</span>' : ""}
+            ${task.is_placeholder ? '<span class="badge badge-gray">演示</span>' : ""}
+            ${task.is_cloud_row ? '<span class="badge badge-blue">云端</span>' : ""}
+            ${truthExecutionBadge(task)}
           </td>
           <td>${formatDate(task.requested_at)}</td>
           <td>
@@ -4989,14 +5118,19 @@ function renderAgentTask() {
     </section>
 
     <section class="agent-task-card">
-      <div class="agent-task-pending-banner">
-        <strong>待接入 Supabase</strong>
-        <span>当前保留文件契约、Skill 弹窗和提交结构；GitHub Pages 阶段只读取 Supabase 展示表，不在浏览器内上传大文件、执行 Agent 或写正式因子库。</span>
-      </div>
+      ${intakeConnectionBanner()}
 
-      <div class="agent-intake-mode">
-        <button type="button" class="${state.intakeTaskType === "research_reproduction" || state.intakeTaskType === "research_report_reproduction" ? "active" : ""}" data-intake-type="research_reproduction">研报自动复现</button>
-        <button type="button" class="${state.intakeTaskType === "truth_compare" || state.intakeTaskType === "factor_values_compare" ? "active" : ""}" data-intake-type="truth_compare">因子值对照</button>
+      <div class="intake-entry-grid">
+        ${intakeEntryCard("truth_compare", {
+          title: "入口一 · 真值对照",
+          summary: "已有因子值，与库内标准真值逐点比对：overlap / exact_match / max_abs_error 全部达标才 accept；无库内真值则 not_comparable 并 reject。",
+          files: "factor_values.csv",
+        })}
+        ${intakeEntryCard("research_reproduction", {
+          title: "入口二 · 研报自动复现",
+          summary: "把研报 / 论文材料复现为可运行候选因子；标准真值仅作诊断，验收看经济有效性、AMR 审核与库内查重。",
+          files: "code.py + experiment_data.csv + paper.pdf + research_report.pdf",
+        })}
       </div>
 
       ${renderCurrentSkillContract()}
