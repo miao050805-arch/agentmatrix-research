@@ -1,5 +1,9 @@
 // GitHub Pages can only host the static dashboard. Set this to a deployed
 // Flask base URL, for example "https://factor-lab-api.onrender.com".
+// Port contract: local development reserves 8012 for the Flask API
+// (backend/factor_lab_api.py); the cloud server (Render) injects $PORT at
+// runtime, so no port is hard-coded here. You can also point a running
+// browser session at any API host with ?api=https://<host>.
 window.FACTOR_LAB_API_HOST = "";
 
 // Supabase public read endpoint for the static dashboard. This key is safe to

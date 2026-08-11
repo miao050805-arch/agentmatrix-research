@@ -132,6 +132,28 @@ API endpoints for front-end and agent orchestration:
 - `POST /api/agents/factor-lab/jobs`
 - `GET /api/agents/factor-lab/jobs/<job_id>`
 
+### Factor Lab 数据入口（两个官方入口）
+
+The dashboard 数据入口 page and the Agent CLI share the same two intake routes:
+
+- `POST /api/agents/factor-lab/intake/truth-compare` — 入口一 · 真值对照：compare a submitted `factor_values.csv` against the library standard truth as the primary gate.
+- `POST /api/agents/factor-lab/intake/research-reproduction` — 入口二 · 研报自动复现：turn research materials into a runnable candidate factor; standard truth is diagnostic only.
+
+Truth-compare execution is offline and file-contract based:
+
+```bash
+# 1. create the task (freezes artifacts/criteria.json, returns task_id)
+python scripts/submit_factor_lab_intake.py truth-compare submissions/example_truth_compare_submission
+
+# 2. execute the comparison (writes status.json + artifacts back to the task dir)
+python scripts/run_truth_compare.py --task-id <task_id> --submission-dir submissions/example_truth_compare_submission
+
+# 3. sync the verdict to the Supabase display tables (service key required)
+python scripts/sync_truth_compare_to_supabase.py --task-id <task_id>
+```
+
+Decision contract: `accept ⇔ standard_truth.status=passed ∧ overlap_ratio ≥ min_overlap_ratio ∧ exact_match_ratio ≥ pass_exact_match_ratio ∧ max_abs_error ≤ tolerance`; missing library truth yields `not_comparable` + `reject`. See `docs/FACTOR_LAB_TRUTH_COMPARE.md` for the full runbook, the port/deployment contract (local 8012, Render `$PORT`), and deterministic three-state sample fixtures under `scripts/dev/make_truth_compare_samples.py`.
+
 ### Run a Sample Strategy
 
 ```python

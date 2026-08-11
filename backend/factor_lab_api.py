@@ -926,6 +926,8 @@ def _create_factor_lab_agent_task(payload: dict):
         "criteria": criteria,
         "criteria_sha256": criteria_sha256,
         "instruction": instruction,
+        "factor_family": criteria.get("factor_family"),
+        "factor_name": payload.get("factor_name"),
         "package": {
             "input_mode": package_payload.get("input_mode") or "folder",
             "package_name": package_payload.get("package_name") or task_id,
